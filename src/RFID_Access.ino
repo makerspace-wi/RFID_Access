@@ -398,16 +398,16 @@ void shutdown(void) {
 void but_led(int var) {
   switch (var) {
     case 1:   // LEDs off
-      lcd.pinLEDs(StopLEDrt, LOW);
-      lcd.pinLEDs(StopLEDgn, LOW);
+      lcd.pinLEDs(StopLEDrt, HIGH);
+      lcd.pinLEDs(StopLEDgn, HIGH);
       break;
     case 2:   // RED LED on
-      lcd.pinLEDs(StopLEDrt, HIGH);
-      lcd.pinLEDs(StopLEDgn, LOW);
-      break;
-    case 3:   // GREEN LED on
       lcd.pinLEDs(StopLEDrt, LOW);
       lcd.pinLEDs(StopLEDgn, HIGH);
+      break;
+    case 3:   // GREEN LED on
+      lcd.pinLEDs(StopLEDrt, HIGH);
+      lcd.pinLEDs(StopLEDgn, LOW);
       break;
   }
 }
