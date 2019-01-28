@@ -6,26 +6,28 @@
   switch on claener by current control
 
   Commands to Raspi
-  'card;nn...' - uid_2 from reader
+  'MAxx'       - from xBee (=Ident)
   'POR'        - machine power on reset
-  'MA01;on'    - machine reporting ON-Status
-  'MA01;off'   - machine reporting OFF-Status
+  'Ident;on'   - machine reporting ON-Status
+  'Ident;off'  - machine reporting OFF-Status
+  'card;nn...' - uid_2 from reader
 
   Commands from Raspi
+  'time'  - format time33.33.33 33:33:33
   'onp'   - Machine permanent ON
   'ontxx' - Machine xxx minutes ON
   'off'   - Machine OFF
-  'time'  - format time33.33.33 33:33:33
   'noreg' - uid_2 not registered
   'setce' - set time before ClosE machine
   'setcn' - set time for longer CleaN on
   'setcl' - set Current Level for switching on and off
 
-  last change: 24.09.2018 by Michael Muehl
+  last change: 28.01.2019 by Michael Muehl
   changed: changed stop reading RFID and change request speed RFID
 */
-#define Version "9.0"
+#define Version "9.1"
 
+#include <Arduino.h>
 #include <TaskScheduler.h>
 #include <Wire.h>
 #include <LCDLED_BreakOUT.h>
@@ -82,12 +84,12 @@ LCDLED_BreakOUT lcd = LCDLED_BreakOUT();
 MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
 
 // Callback methods prototypes
-void checkXbee();       // Task for Mainfunction
-void UnLoCallback();    // Task to Unlock machine
-void BlinkCallback();   // Task to let LED blink - added by D. Haude 08.03.2017
-void FlashCallback();   // Task to let LED blink - added by D. Haude 08.03.2017
-void DispOFF();         // Task to switch display off after time
-void BuzzerOn();        // added by DieterH on 22.10.2017
+void checkXbee();        // Task connect to xBee Server
+void UnLoCallback();     // Task to Unlock machine
+void BlinkCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
+void FlashCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
+void DispOFF();          // Task to switch display off after time
+void BuzzerOn();         // added by DieterH on 22.10.2017
 void OnTimed(long);
 void flash_led(int);
 
@@ -291,6 +293,7 @@ void DispOFF() {
   tM.setInterval(SECONDS);
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
+  but_led(1);
 }
 
 // Current measure -----
