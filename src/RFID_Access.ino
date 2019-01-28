@@ -13,7 +13,7 @@
   'card;nn...' - uid_2 from reader
 
   Commands from Raspi
-  'time'  - format time33.33.33 33:33:33
+  'time'  - format time33.33.3333 33:33:33
   'onp'   - Machine permanent ON
   'ontxx' - Machine xxx minutes ON
   'off'   - Machine OFF
