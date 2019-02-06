@@ -22,10 +22,10 @@
   'setcn' - set time for longer CleaN on
   'setcl' - set Current Level for switching on and off
 
-  last change: 28.01.2019 by Michael Muehl
-  changed: changed stop reading RFID and change request speed RFID
+  last change: 06.02.2019 by Michael Muehl
+  changed: changed current measurme, genarate switch level for bolwer
 */
-#define Version "9.1"
+#define Version "9.2"
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -75,8 +75,8 @@ byte I2CTransmissionResult = 0;
 #define SECONDS      1000 // multiplier for second
 #define porTime         5 // wait seconds for sending Ident + POR
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
-#define currHyst       10 // hystereses for current detection normal
-#define currMean        3 // current average over ...
+#define currHyst       10 // [10] hystereses for current detection normal
+#define currMean        3 // [ 3] current average over ...
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -274,7 +274,7 @@ void UnLoCallback() {   // 500ms Tick
       lcd.setCursor(16, 3); lcd.print(tbs);
     }
   }
-  if (((timer == 0 && onTime) || buttons & BUTTON_P2) && stepsCM <=1) {   //  time == 0 and timed or Button
+  if (((timer == 0 && onTime) || buttons & BUTTON_P2) && stepsCM <=3) {   //  time == 0 and timed or Button
       onTime = false;
       shutdown();
   }
