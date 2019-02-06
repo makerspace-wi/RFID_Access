@@ -311,7 +311,7 @@ void Current() {   // 500ms Tick
       break;
     case 1:   // current > level
       if (currentVal > CURLEV) {
-        digitalWrite(SSR_Vac, HIGH);
+      	digitalWrite(SSR_Vac, HIGH);
         stepsCM = 2;
       }
       break;
@@ -324,19 +324,25 @@ void Current() {   // 500ms Tick
         countCM = 0;
       }
       break;
-    case 3:   // wait for level less then level 3 times
+    case 3:   // current > level
+      if (currentVal > CURLEV) {
+        digitalWrite(SSR_Vac, HIGH);
+        stepsCM = 4;
+      }
+      break;
+    case 4:   // wait for level less then level 3 times
       if (currentVal < CURLEV && countCM < CLEAN *2 +1) {
         ++countCM;
       } else if (currentVal > CURLEV && countCM < CLEAN *2 +1) {
         countCM =0;
       } else if (countCM >= CLEAN *2) {
-        stepsCM = 4;
+        stepsCM = 5;
         countCM = 0;
       }
       break;
-    case 4:   // switch off clean after x sec later
+    case 5:   // switch off clean after x sec later
       digitalWrite(SSR_Vac, LOW);
-      stepsCM = 1;
+      stepsCM = 3;
       break;
   }
   currentVal = (currentVal + currentMax) / 2;
@@ -504,7 +510,7 @@ void evalSerialData() {
     IDENT = inStr;
   }
 
-  if (inStr.startsWith("ONT")) {
+  if (inStr.startsWith("ONT") && inStr.length() >=4) {
     val = inStr.substring(3).toInt();
     OnTimed(val);
     tM.disable();
@@ -519,7 +525,7 @@ void evalSerialData() {
     shutdown(); // Turn OFF Machine
   }
 
-  if (inStr.startsWith("TIME") && stepsCM <=1) {
+  if (inStr.startsWith("TIME") && stepsCM <=3) {
     lcd.setCursor(0, 1); lcd.print(inStr.substring(4));
     tB.setInterval(500);
     getTime = 255;
