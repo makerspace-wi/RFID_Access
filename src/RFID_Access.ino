@@ -24,8 +24,9 @@
 
   last change: 06.02.2019 by Michael Muehl
   changed: changed current measurme, genarate switch level for bolwer
+				   changed RFID detection from 1sec to 6 sec in 2 hours
 */
-#define Version "9.2"
+#define Version "9.3"
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -71,8 +72,7 @@ byte I2CTransmissionResult = 0;
 // DEFINES
 #define butTime       500 // ms Tastenabfragezeit
 #define CLOSE2END      15 // MINUTES before activation is off
-#define CLEANON         4 // SECONDS vac on for a time
-#define SECONDS      1000 // multiplier for second
+#define CLEANON         4 // TASK_SECOND vac on for a time
 #define porTime         5 // wait seconds for sending Ident + POR
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
@@ -116,6 +116,8 @@ byte getTime = porTime;
 unsigned long code;
 byte atqa[2];
 byte atqaLen = sizeof(atqa);
+byte intervalRFID = 0;      // 0 = off; from 1 sec to 6 sec after Displayoff
+unsigned int secCount = 0;  // change interval in 3600 sec
 
 // Variables can be set externaly: ---
 // --- on timed, time before new activation
@@ -193,7 +195,7 @@ void setup() {
     tC.enable();  // Current
   } else {
     tB.enable();  // enable Task Error blinking
-    tB.setInterval(SECONDS);
+    tB.setInterval(TASK_SECOND);
   }
 }
 
@@ -208,11 +210,11 @@ void checkXbee() {
 }
 
 void retryPOR() {
-  tDF.restartDelayed(30 * SECONDS); // restart display light
+  tDF.restartDelayed(TASK_SECOND * 30); // restart display light
   if (getTime < porTime * 5) {
     Serial.println(String(IDENT) + ";POR");
     ++getTime;
-    tB.setInterval(getTime * SECONDS);
+    tB.setInterval(TASK_SECOND * getTime);
     lcd.setCursor(0, 0); lcd.print(String(IDENT) + " ");
     lcd.setCursor(16, 1); lcd.print((getTime - porTime) * porTime);
   }
@@ -236,7 +238,7 @@ void MainCallback() {   // 500ms Tick
       flash_led(4);
       tBD.setCallback(&FlashCallback);
       tBD.restartDelayed(100);
-      tDF.restartDelayed(30 * SECONDS);
+      tDF.restartDelayed(TASK_SECOND * 30);
     }
     Serial.println("card;" + String(code));
     // Display changes
@@ -244,8 +246,15 @@ void MainCallback() {   // 500ms Tick
     lcd.setCursor(0, 0); lcd.print("Card# "); lcd.print(code);
     displayON();
     // Finish RFID
-    mfrc522.PICC_HaltA(); // Stop reading Michael Muehl added 17.07.18
-    mfrc522.PCD_StopCrypto1();
+    // mfrc522.PICC_HaltA(); // Stop reading Michael Muehl added 17.07.18
+    // mfrc522.PCD_StopCrypto1();
+  }
+  if (intervalRFID > 0 && secCount <= 3600) {
+    secCount = secCount + intervalRFID;
+    if (secCount % 1200 == 0) {  // 7200 / 6 ( in 1 hour 6 sec interval)
+      ++intervalRFID;
+      tM.setInterval(TASK_SECOND * intervalRFID);
+    }
   }
 }
 
@@ -290,7 +299,9 @@ void FlashCallback() {
 }
 
 void DispOFF() {
-  tM.setInterval(SECONDS);
+  intervalRFID = 1;
+  secCount = 0;
+  tM.setInterval(TASK_SECOND * intervalRFID);
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
   but_led(1);
@@ -394,7 +405,7 @@ void shutdown(void) {
   but_led(2);
   digitalWrite(SSR_Machine, LOW);
   Serial.println(String(IDENT) + ";off");
-  tDF.restartDelayed(30 * SECONDS);
+  tDF.restartDelayed(TASK_SECOND * 30);
   BadSound();
   flash_led(1);
   tM.enable();  // added by DieterH on 18.10.2017
@@ -474,6 +485,8 @@ void dispRFID(void) {
 void displayON() {
   tM.setInterval(butTime);
   lcd.setBacklight(BACKLIGHTon);
+  intervalRFID = 0;
+  secCount = 3999;
 }
 
 /*Function: Sample for 100ms and get the maximum value from the SIG pin*/
