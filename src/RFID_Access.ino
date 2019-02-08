@@ -70,10 +70,9 @@ byte I2CTransmissionResult = 0;
 #define BACKLIGHTon  0x1
 
 // DEFINES
-#define butTime       500 // ms Tastenabfragezeit
 #define CLOSE2END      15 // MINUTES before activation is off
-#define CLEANON         4 // TASK_SECOND vac on for a time
 #define porTime         5 // wait seconds for sending Ident + POR
+#define CLEANON         4 // TASK_SECOND vac on for a time
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
 #define currMean        3 // [ 3] current average over ...
@@ -96,15 +95,15 @@ void flash_led(int);
 void Current();         // current measurement and detection
 
 // TASKS
-Task tM(butTime, TASK_FOREVER, &checkXbee);
-Task tU(butTime, TASK_FOREVER, &UnLoCallback);
-Task tB(5000, TASK_FOREVER, &BlinkCallback);   //added M. Muehl
-Task tBeeper(100, 6, &BuzzerOn);  //added by DieterH on 22.10.2017
-Task tBD(1, TASK_ONCE, &FlashCallback);   //Flash Delay
-Task tDF(1, TASK_ONCE, &DispOFF); // display off
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);			// 500ms
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // added M. Muehl
+Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
+Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
+Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
+Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
 
-// Current measurement ------
-Task tC(butTime, TASK_FOREVER, &Current); // current measure
+// --- Current measurement --
+Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current); // current measure
 
 // VARIABLES
 unsigned long val;
@@ -112,7 +111,6 @@ unsigned int timer = 0;
 bool onTime = false;
 int minutes = 0;
 bool toggle = false;
-byte getTime = porTime;
 unsigned long code;
 byte atqa[2];
 byte atqaLen = sizeof(atqa);
@@ -132,17 +130,18 @@ unsigned int currentMax =0;   // read max value
 byte stepsCM = 0;             // steps for current measurement
 byte countCM = 0;             // counter for current measurement
 
-// Serial
+// Serial with xBee
 String inStr = "";  // a string to hold incoming data
 String IDENT = "";  // Machine identifier for remote access control
 byte plplpl = 0;    // send +++ control AT sequenz
+byte getTime = porTime;
 
 // ======>  SET UP AREA <=====
 void setup() {
-  //init Serial
+  //init Serial port
   Serial.begin(57600);  // Serial
   inStr.reserve(40);    // reserve for instr serial input
-  IDENT.reserve(5);     // reserve for instr serial input
+  IDENT.reserve(5);     // reserve for IDENT serial output
 
   // initialize:
   Wire.begin();         // I2C
@@ -483,7 +482,7 @@ void dispRFID(void) {
 }
 
 void displayON() {
-  tM.setInterval(butTime);
+  tM.setInterval(TASK_SECOND / 2);
   lcd.setBacklight(BACKLIGHTon);
   intervalRFID = 0;
   secCount = 3999;
