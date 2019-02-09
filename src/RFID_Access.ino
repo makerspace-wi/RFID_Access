@@ -458,7 +458,7 @@ void granted()  {
   tU.enable();
   flash_led(1);
   digitalWrite(SSR_Machine, HIGH);
-  lcd.setCursor(0, 2); lcd.print("Access granted");
+  lcd.setCursor(0, 2); lcd.print("Access granted      ");
   secCount = 0;
   if (gateNR < 6 || gateNR > 8) {
     tGP.disable();
