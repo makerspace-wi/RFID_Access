@@ -11,6 +11,8 @@
   'Ident;on'   - machine reporting ON-Status
   'Ident;off'  - machine reporting OFF-Status
   'card;nn...' - uid_2 from reader
+  'ogx'        - open gate (x=6,7,8)
+  'cgx'        - close gate (x=6,7,8)
 
   Commands from Raspi
   'time'  - format time33.33.3333 33:33:33
@@ -21,10 +23,14 @@
   'setce' - set time before ClosE machine
   'setcn' - set time for longer CleaN on
   'setcl' - set Current Level for switching on and off
+  'gxo'   - gate (x=6,7,8) open
+  'gxc'   - gate (x=6,7,8) closed
+  'ngx'   - no gate (x=6,7,8) available
 
-  last change: 06.02.2019 by Michael Muehl
+  last change: 09.02.2019 by Michael Muehl
   changed: changed current measurme, genarate switch level for bolwer
 				   changed RFID detection from 1sec to 6 sec in 2 hours
+					 add gate control only for MA06 - MA08
 */
 #define Version "9.3"
 
@@ -76,6 +82,7 @@ byte I2CTransmissionResult = 0;
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
 #define currMean        3 // [ 3] current average over ...
+#define intervalMAX     6 // max wait time for RFID select 6 - 1 sec (5)
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -101,6 +108,7 @@ Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
 Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
 Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
 Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
+Task tGP(TASK_SECOND, TASK_FOREVER, &gatePosition);               // display gate position
 
 // --- Current measurement --
 Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current); // current measure
@@ -116,6 +124,10 @@ byte atqa[2];
 byte atqaLen = sizeof(atqa);
 byte intervalRFID = 0;      // 0 = off; from 1 sec to 6 sec after Displayoff
 unsigned int secCount = 0;  // change interval in 3600 sec
+int gateNR = 0;             // "0" = no gates, 7,8,9 with gate
+boolean gateSET = HIGH;     // HIGH = no command set, gate set to open / close
+boolean gateOPEN = LOW;     // gate opened if set ==0
+boolean gateCLOSE = LOW;    // gate closed if set ==0
 
 // Variables can be set externaly: ---
 // --- on timed, time before new activation
@@ -167,6 +179,7 @@ void setup() {
   runner.addTask(tBeeper);
   runner.addTask(tBD);
   runner.addTask(tDF);
+  runner.addTask(tGP);
 
 // Current --------
   runner.addTask(tC);
@@ -248,9 +261,9 @@ void MainCallback() {   // 500ms Tick
     // mfrc522.PICC_HaltA(); // Stop reading Michael Muehl added 17.07.18
     // mfrc522.PCD_StopCrypto1();
   }
-  if (intervalRFID > 0 && secCount <= 3600) {
+  if (intervalRFID > 0 && intervalRFID < intervalMAX) {
     secCount = secCount + intervalRFID;
-    if (secCount % 1200 == 0) {  // 7200 / 6 ( in 1 hour 6 sec interval)
+    if (secCount % 1200 == 0) {  // 7200 / 6 ( in 1 hour 5 sec interval)
       ++intervalRFID;
       tM.setInterval(TASK_SECOND * intervalRFID);
     }
@@ -272,7 +285,6 @@ void UnLoCallback() {   // 500ms Tick
       lcd.setCursor(0, 0); lcd.print("Place Tag @ Reader");
       lcd.setCursor(0, 1); lcd.print("to extend Time      ");
       displayON();
-      tM.enable();
     }
     timer -= 1;
     minutes = timer / 120;
@@ -321,7 +333,13 @@ void Current() {   // 500ms Tick
       break;
     case 1:   // current > level
       if (currentVal > CURLEV) {
-      	digitalWrite(SSR_Vac, HIGH);
+        if (gateNR > 0 && gateCLOSE && !gateOPEN) {
+          Serial.println("OG"+ String(gateNR));
+          gateSET = HIGH;
+          gateOPEN = HIGH;
+          gateCLOSE = LOW;
+        }
+        digitalWrite(SSR_Vac, HIGH);
         stepsCM = 2;
       }
       break;
@@ -336,6 +354,12 @@ void Current() {   // 500ms Tick
       break;
     case 3:   // current > level
       if (currentVal > CURLEV) {
+        if (gateNR > 0 && gateCLOSE && !gateOPEN) {
+          Serial.println("OG"+ String(gateNR));
+          gateSET = HIGH;
+          gateOPEN = HIGH;
+          gateCLOSE = LOW;
+        }
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 4;
       }
@@ -351,11 +375,50 @@ void Current() {   // 500ms Tick
       }
       break;
     case 5:   // switch off clean after x sec later
+      if (gateNR > 0 && !gateCLOSE && gateOPEN) {
+        Serial.println("CG"+ String(gateNR));
+        gateSET = HIGH;
+        gateOPEN = LOW;
+        gateCLOSE = HIGH;
+      }
       digitalWrite(SSR_Vac, LOW);
       stepsCM = 3;
       break;
   }
   currentVal = (currentVal + currentMax) / 2;
+}
+
+void gatePosition() {
+  if (gateNR > 0) {
+    if (gateSET) {
+      if (!gateOPEN && !gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("OK???");
+      }
+      if (gateOPEN && !gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("open ");
+      }
+      if (!gateOPEN && gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("close");
+      }
+      ++secCount;
+      if (secCount % 2 == 0) {
+        flash_led(3);
+      } else {
+        flash_led(2);
+      }
+    } else {
+      if (gateOPEN && !gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("OPEN ");
+      }
+      if (!gateOPEN && gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("CLOSE");
+      }
+      if (!gateOPEN && !gateCLOSE) {
+        lcd.setCursor(15, 2); lcd.print("     ");
+        tGP.disable();
+      }
+    }
+  }
 }
 // END OF TASKS ---------------------------------
 
@@ -388,6 +451,7 @@ void OnPerm(void)  {    // Turn on machine permanently (VIP-Users only)
 
 // Tag registered
 void granted()  {
+  tM.disable();
   tDF.disable();
   but_led(3);
   GoodSound();
@@ -395,11 +459,18 @@ void granted()  {
   flash_led(1);
   digitalWrite(SSR_Machine, HIGH);
   lcd.setCursor(0, 2); lcd.print("Access granted");
+  secCount = 0;
+  if (gateNR < 6 || gateNR > 8) {
+    tGP.disable();
+  } else {
+    tGP.enable();
+  }
 }
 
 // Switch off machine and stop
 void shutdown(void) {
   tU.disable();
+  tGP.disable();
   timer = 0;
   but_led(2);
   digitalWrite(SSR_Machine, LOW);
@@ -485,7 +556,7 @@ void displayON() {
   tM.setInterval(TASK_SECOND / 2);
   lcd.setBacklight(BACKLIGHTon);
   intervalRFID = 0;
-  secCount = 3999;
+  tM.enable();
 }
 
 /*Function: Sample for 100ms and get the maximum value from the SIG pin*/
@@ -520,17 +591,46 @@ void evalSerialData() {
   if (inStr.startsWith("MA")) {
     Serial.println("ATCN");
     IDENT = inStr;
+    gateNR = inStr.substring(2).toInt();
+    if (gateNR < 6 || gateNR > 8) gateNR = 0; gateSET = LOW;
+  }
+
+  if (gateNR > 0) {
+    if (inStr.startsWith("G") && inStr.endsWith("O") && inStr.length() == 3) { //
+      if (inStr.substring(1, 2).toInt() == gateNR) {
+        gateOPEN = HIGH;
+        gateCLOSE = LOW;
+        gateSET = LOW;
+        flash_led(1);
+      }
+    }
+
+    if (inStr.startsWith("G") && inStr.endsWith("C") && inStr.length() == 3) { //
+      if (inStr.substring(1,2).toInt() == gateNR) {
+        gateOPEN = LOW;
+        gateCLOSE = HIGH;
+        gateSET = LOW;
+        flash_led(1);
+      }
+    }
+
+    if (inStr.startsWith("NG") && inStr.length() == 3) { //
+      if (inStr.substring(2).toInt() == gateNR) {
+        gateOPEN = LOW;
+        gateCLOSE = LOW;
+        gateSET = LOW;
+        flash_led(1);
+      }
+    }
   }
 
   if (inStr.startsWith("ONT") && inStr.length() >=4) {
     val = inStr.substring(3).toInt();
     OnTimed(val);
-    tM.disable();
   }
 
   if (inStr.startsWith("ONP")) {
     OnPerm();
-    tM.disable();
   }
 
   if (inStr.startsWith("OFF")) {
@@ -559,6 +659,7 @@ void evalSerialData() {
   if (inStr.startsWith("SETCL")) { // set Current Level for switching on and off
     CURLEV = inStr.substring(5).toInt();
   }
+  inStr = "";
 }
 
 /* SerialEvent occurs whenever a new data comes in the
@@ -570,7 +671,6 @@ void serialEvent() {
   char inChar = (char)Serial.read();
   if (inChar == '\x0d') {
     evalSerialData();
-    inStr = "";
   } else {
     inStr += inChar;
   }
