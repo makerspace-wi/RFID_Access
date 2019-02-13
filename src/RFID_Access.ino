@@ -82,8 +82,9 @@ byte I2CTransmissionResult = 0;
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
 #define currMean        3 // [ 3] current average over ...
-#define intervalMAX     6 // max wait time for RFID select 6 - 1 sec (5)
-
+#define intervalMAX     5 // <max wait time for RFID select
+#define intervalINC	 3600 // 3600 * 4
+ 
 // CREATE OBJECTS
 Scheduler runner;
 LCDLED_BreakOUT lcd = LCDLED_BreakOUT();
@@ -263,7 +264,7 @@ void MainCallback() {   // 500ms Tick
   }
   if (intervalRFID > 0 && intervalRFID < intervalMAX) {
     secCount = secCount + intervalRFID;
-    if (secCount % 1200 == 0) {  // 7200 / 6 ( in 1 hour 5 sec interval)
+    if (secCount % intervalINC == 0) {
       ++intervalRFID;
       tM.setInterval(TASK_SECOND * intervalRFID);
     }
