@@ -283,6 +283,12 @@ void MainCallback() {   // 500ms Tick
     tB.enable();   //  time == 0 and timed or Button
   } else if (displayIsON) {
     tB.disable();   //  time == 0 and timed or Button
+    if (gateNR > 0 && !gateCLOSE && gateOPEN) {
+      Serial.println("CG"+ String(gateNR));
+      gateSET = HIGH;
+      gateOPEN = LOW;
+      gateCLOSE = HIGH;
+    }
     digitalWrite(SSR_Vac, LOW);
     pushCount = 0;
     steps4push = 0;
@@ -595,6 +601,12 @@ void pushClean() {
           but_led(1);
         }
         if (pushCount > intervalPush) {
+          if (gateNR > 0 && gateCLOSE && !gateOPEN) {
+            Serial.println("OG"+ String(gateNR));
+            gateSET = HIGH;
+            gateOPEN = HIGH;
+            gateCLOSE = LOW;
+          }
           digitalWrite(SSR_Vac, HIGH);
           pushCount = 0;
           steps4push = 1;
@@ -609,6 +621,12 @@ void pushClean() {
       flash_led(3);
       ++pushCount;
       if ((buttons & BUTTON_P2 && pushCount > intervalCLMn) || pushCount > intervalCLMx) {
+        if (gateNR > 0 && !gateCLOSE && gateOPEN) {
+          Serial.println("CG"+ String(gateNR));
+          gateSET = HIGH;
+          gateOPEN = LOW;
+          gateCLOSE = HIGH;
+        }
         digitalWrite(SSR_Vac, LOW);
         pushCount = 0;
         steps4push = 0;
