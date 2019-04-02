@@ -27,12 +27,13 @@
   'gxc'   - gate (x=6,7,8) closed
   'ngx'   - no gate (x=6,7,8) available
 
-  last change: 09.02.2019 by Michael Muehl
+  last change: 02.04.2019 by Michael Muehl
   changed: changed current measurme, genarate switch level for bolwer
-				   changed RFID detection from 1sec to 6 sec in 2 hours
-					 add gate control only for MA06 - MA08
+           changed RFID detection from 1sec to 6 sec in 2 hours
+           add gate control only for MA06 - MA08
+           add separate switch of cleaner if present (display is dark)
 */
-#define Version "9.3"
+#define Version "9.4"
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -84,7 +85,10 @@ byte I2CTransmissionResult = 0;
 #define currMean        3 // [ 3] current average over ...
 #define intervalMAX     5 // <max wait time for RFID select
 #define intervalINC	 3600 // 3600 * 4
- 
+#define intervalPush    5 // seconds to push button before clean starts
+#define intervalCLMn   30 // min clean time in seconds
+#define intervalCLMx   10 * 60 // max clean time in seconds
+
 // CREATE OBJECTS
 Scheduler runner;
 LCDLED_BreakOUT lcd = LCDLED_BreakOUT();
@@ -109,7 +113,7 @@ Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
 Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
 Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
 Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
-Task tGP(TASK_SECOND, TASK_FOREVER, &gatePosition);               // display gate position
+Task tGP(TASK_SECOND, TASK_FOREVER, &gatePosition);     // display gate position
 
 // --- Current measurement --
 Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current); // current measure
@@ -125,6 +129,12 @@ byte atqa[2];
 byte atqaLen = sizeof(atqa);
 byte intervalRFID = 0;      // 0 = off; from 1 sec to 6 sec after Displayoff
 unsigned int secCount = 0;  // change interval in 3600 sec
+// Cleaner Control
+bool displayIsON = false;   // if display is switched on = true
+bool isCleaner  = false;    // is cleaner under control (installed)
+byte steps4push = 0;        // steps for push button action
+unsigned int pushCount = 0; // counter how long push button in action
+// Gate control
 int gateNR = 0;             // "0" = no gates, 7,8,9 with gate
 boolean gateSET = HIGH;     // HIGH = no command set, gate set to open / close
 boolean gateOPEN = LOW;     // gate opened if set ==0
@@ -258,9 +268,6 @@ void MainCallback() {   // 500ms Tick
     lcd.setCursor(5, 0); lcd.print("               ");
     lcd.setCursor(0, 0); lcd.print("Card# "); lcd.print(code);
     displayON();
-    // Finish RFID
-    // mfrc522.PICC_HaltA(); // Stop reading Michael Muehl added 17.07.18
-    // mfrc522.PCD_StopCrypto1();
   }
   if (intervalRFID > 0 && intervalRFID < intervalMAX) {
     secCount = secCount + intervalRFID;
@@ -268,6 +275,18 @@ void MainCallback() {   // 500ms Tick
       ++intervalRFID;
       tM.setInterval(TASK_SECOND * intervalRFID);
     }
+  }
+
+  if (isCleaner && !displayIsON) {
+    tB.setCallback(pushClean);
+    tB.setInterval(TASK_SECOND);
+    tB.enable();   //  time == 0 and timed or Button
+  } else if (displayIsON) {
+    tB.disable();   //  time == 0 and timed or Button
+    digitalWrite(SSR_Vac, LOW);
+    pushCount = 0;
+    steps4push = 0;
+    flash_led(1);
   }
 }
 
@@ -311,6 +330,7 @@ void FlashCallback() {
 }
 
 void DispOFF() {
+  displayIsON = false;
   intervalRFID = 1;
   secCount = 0;
   tM.setInterval(TASK_SECOND * intervalRFID);
@@ -351,6 +371,7 @@ void Current() {   // 500ms Tick
         CURLEV = currentVal / 2;
         stepsCM = 3;
         countCM = 0;
+        isCleaner = true;
       }
       break;
     case 3:   // current > level
@@ -554,10 +575,47 @@ void dispRFID(void) {
 }
 
 void displayON() {
+  displayIsON = true;
   tM.setInterval(TASK_SECOND / 2);
   lcd.setBacklight(BACKLIGHTon);
   intervalRFID = 0;
   tM.enable();
+}
+
+// cleaner if current and machine off
+void pushClean() {
+  uint8_t buttons = lcd.readButtons();
+  switch (steps4push) {
+    case 0:
+      if (buttons & BUTTON_P2) {
+        ++pushCount;
+        if (pushCount % 2 == 0) {
+          but_led(2);
+        } else {
+          but_led(1);
+        }
+        if (pushCount > intervalPush) {
+          digitalWrite(SSR_Vac, HIGH);
+          pushCount = 0;
+          steps4push = 1;
+          but_led(1);
+        }
+      } else {
+        but_led(1);
+        pushCount = 0;
+      }
+      break;
+    case 1:
+      flash_led(3);
+      ++pushCount;
+      if ((buttons & BUTTON_P2 && pushCount > intervalCLMn) || pushCount > intervalCLMx) {
+        digitalWrite(SSR_Vac, LOW);
+        pushCount = 0;
+        steps4push = 0;
+      }
+      flash_led(1);
+      break;
+  }
 }
 
 /*Function: Sample for 100ms and get the maximum value from the SIG pin*/
