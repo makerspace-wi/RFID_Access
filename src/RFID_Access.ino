@@ -281,7 +281,7 @@ void MainCallback() {   // 500ms Tick
     tB.setCallback(pushClean);
     tB.setInterval(TASK_SECOND);
     tB.enable();   //  time == 0 and timed or Button
-  } else if (displayIsON) {
+  } else if (displayIsON && steps4push > 0) {
     tB.disable();   //  time == 0 and timed or Button
     if (gateNR > 0 && !gateCLOSE && gateOPEN) {
       Serial.println("CG"+ String(gateNR));
