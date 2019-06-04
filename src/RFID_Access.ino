@@ -3,7 +3,7 @@
   started on 01JAN2017 - uploaded on 06.01.2017 by Dieter
   Code for machine and cleaner control over RFID
   reading IDENT from xBee, retrait sending ...POR until time responds
-  switch on claener by current control
+  switch on claener by current control and separate cleaner on
 
   Commands to Raspi
   'MAxx'       - from xBee (=Ident)
