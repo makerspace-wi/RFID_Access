@@ -31,7 +31,7 @@
   changed: changed current measurme, genarate switch level for bolwer
            changed RFID detection from 1sec to 6 sec in 2 hours
            add gate control only for MA06 - MA08
-           add separate switch of cleaner if present (display is dark)
+           add separate switching cleaner if present (display is dark)
 */
 #define Version "9.4"
 
