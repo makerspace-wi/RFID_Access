@@ -5,14 +5,19 @@
   reading IDENT from xBee, retrait sending ...POR until time responds
   switch on claener by current control and separate cleaner on
 
-  Commands to Raspi
-  'MAxx'       - from xBee (=Ident)
-  'POR'        - machine power on reset
+  Commands to Raspi --->
+  'MAxx'  - from xBee (=Ident)
+  'POR'   - machine power on reset (Ident;por)
+
   'Ident;on'   - machine reporting ON-Status
   'Ident;off'  - machine reporting OFF-Status
   'card;nn...' - uid_2 from reader
-  'ogx'        - open gate (x=6,7,8)
-  'cgx'        - close gate (x=6,7,8)
+  ---------- (_=6,7,8,9)
+  'li_'   - log in for machine
+  'lo_'   - log out for machine
+  'do_'   - Dust collector On for machine
+  'df_'   - Dust collector oFf for machine
+  'ng_'   - No Gate is available
 
   Commands from Raspi
   'time'  - format time33.33.3333 33:33:33
@@ -20,20 +25,27 @@
   'ontxx' - Machine xxx minutes ON
   'off'   - Machine OFF
   'noreg' - uid_2 not registered
+
   'setce' - set time before ClosE machine
   'setcn' - set time for longer CleaN on
   'setcl' - set Current Level for switching on and off
-  'gxo'   - gate (x=6,7,8) open
-  'gxc'   - gate (x=6,7,8) closed
-  'ngx'   - no gate (x=6,7,8) available
+  ---------- (_=6,7,8,9)
+  'g_o'   - Gate is Open
+  'gho'   - Gate By hand is open (Manuell)
+  'g_c'   - Gate is Closed
+  'ghc'   - gate By hand is closed
+  'g_x'   - Gate position not defined: X
+  'ghx'   - Gate Hand position not defined: X
+  'err'   - Error message is following ('ERR:G7O')
+  'gok'   - all blast gates are ok, in write position
 
-  last change: 02.04.2019 by Michael Muehl
+  last change: 25.08.2019 by Michael Muehl
   changed: changed current measurme, genarate switch level for bolwer
            changed RFID detection from 1sec to 6 sec in 2 hours
-           add gate control only for MA06 - MA08
+           add gate control only for MA06 - MA09
            add separate switching cleaner if present (display is dark)
 */
-#define Version "9.4"
+#define Version "9.e" // 5 (Test)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -77,8 +89,8 @@ byte I2CTransmissionResult = 0;
 #define BACKLIGHTon  0x1
 
 // DEFINES
-#define CLOSE2END      15 // MINUTES before activation is off
 #define porTime         5 // wait seconds for sending Ident + POR
+#define CLOSE2END      15 // MINUTES before activation is off
 #define CLEANON         4 // TASK_SECOND vac on for a time
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
@@ -107,16 +119,15 @@ void flash_led(int);
 void Current();         // current measurement and detection
 
 // TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);			// 500ms
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms
 Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // added M. Muehl
 Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
 Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
 Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
 Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
-Task tGP(TASK_SECOND, TASK_FOREVER, &gatePosition);     // display gate position
 
 // --- Current measurement --
-Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current); // current measure
+Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current);       // current measure
 
 // VARIABLES
 unsigned long val;
@@ -135,10 +146,10 @@ bool isCleaner  = false;    // is cleaner under control (installed)
 byte steps4push = 0;        // steps for push button action
 unsigned int pushCount = 0; // counter how long push button in action
 // Gate control
-int gateNR = 0;             // "0" = no gates, 7,8,9 with gate
-boolean gateSET = HIGH;     // HIGH = no command set, gate set to open / close
-boolean gateOPEN = LOW;     // gate opened if set ==0
-boolean gateCLOSE = LOW;    // gate closed if set ==0
+boolean noGATE = HIGH;      // bit no gate = HIGH
+boolean gateME = LOW;       // bit gate MEssage = LOW (no message)
+int gateNR = 0;             // "0" = no gates, 6,7,8,9 with gate
+int gatERR = 0;             // count gate ERRor > 0  (Modulo 2 on / off = Blink)
 
 // Variables can be set externaly: ---
 // --- on timed, time before new activation
@@ -190,7 +201,6 @@ void setup() {
   runner.addTask(tBeeper);
   runner.addTask(tBD);
   runner.addTask(tDF);
-  runner.addTask(tGP);
 
 // Current --------
   runner.addTask(tC);
@@ -277,18 +287,12 @@ void MainCallback() {   // 500ms Tick
     }
   }
 
-  if (isCleaner && !displayIsON) {
+  if (gateNR == 0 && isCleaner && !displayIsON) {
     tB.setCallback(pushClean);
     tB.setInterval(TASK_SECOND);
     tB.enable();   //  time == 0 and timed or Button
-  } else if (displayIsON && steps4push > 0) {
+  } else if (gateNR == 0 && displayIsON && steps4push > 0) {
     tB.disable();   //  time == 0 and timed or Button
-    if (gateNR > 0 && !gateCLOSE && gateOPEN) {
-      Serial.println("CG"+ String(gateNR));
-      gateSET = HIGH;
-      gateOPEN = LOW;
-      gateCLOSE = HIGH;
-    }
     digitalWrite(SSR_Vac, LOW);
     pushCount = 0;
     steps4push = 0;
@@ -320,6 +324,7 @@ void UnLoCallback() {   // 500ms Tick
       lcd.setCursor(16, 3); lcd.print(tbs);
     }
   }
+  if (timer == 0 && onTime && stepsCM >3) timer = 1;
   if (((timer == 0 && onTime) || buttons & BUTTON_P2) && stepsCM <=3) {   //  time == 0 and timed or Button
       onTime = false;
       shutdown();
@@ -360,12 +365,7 @@ void Current() {   // 500ms Tick
       break;
     case 1:   // current > level
       if (currentVal > CURLEV) {
-        if (gateNR > 0 && gateCLOSE && !gateOPEN) {
-          Serial.println("OG"+ String(gateNR));
-          gateSET = HIGH;
-          gateOPEN = HIGH;
-          gateCLOSE = LOW;
-        }
+        if (gateNR > 0) Serial.println("DO"+ String(gateNR));
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 2;
       }
@@ -382,12 +382,7 @@ void Current() {   // 500ms Tick
       break;
     case 3:   // current > level
       if (currentVal > CURLEV) {
-        if (gateNR > 0 && gateCLOSE && !gateOPEN) {
-          Serial.println("OG"+ String(gateNR));
-          gateSET = HIGH;
-          gateOPEN = HIGH;
-          gateCLOSE = LOW;
-        }
+        if (gateNR > 0) Serial.println("DO"+ String(gateNR));
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 4;
       }
@@ -403,50 +398,12 @@ void Current() {   // 500ms Tick
       }
       break;
     case 5:   // switch off clean after x sec later
-      if (gateNR > 0 && !gateCLOSE && gateOPEN) {
-        Serial.println("CG"+ String(gateNR));
-        gateSET = HIGH;
-        gateOPEN = LOW;
-        gateCLOSE = HIGH;
-      }
+      if (gateNR > 0) Serial.println("DF"+ String(gateNR));
       digitalWrite(SSR_Vac, LOW);
       stepsCM = 3;
       break;
   }
   currentVal = (currentVal + currentMax) / 2;
-}
-
-void gatePosition() {
-  if (gateNR > 0) {
-    if (gateSET) {
-      if (!gateOPEN && !gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("OK???");
-      }
-      if (gateOPEN && !gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("open ");
-      }
-      if (!gateOPEN && gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("close");
-      }
-      ++secCount;
-      if (secCount % 2 == 0) {
-        flash_led(3);
-      } else {
-        flash_led(2);
-      }
-    } else {
-      if (gateOPEN && !gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("OPEN ");
-      }
-      if (!gateOPEN && gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("CLOSE");
-      }
-      if (!gateOPEN && !gateCLOSE) {
-        lcd.setCursor(15, 2); lcd.print("     ");
-        tGP.disable();
-      }
-    }
-  }
 }
 // END OF TASKS ---------------------------------
 
@@ -481,24 +438,27 @@ void OnPerm(void)  {    // Turn on machine permanently (VIP-Users only)
 void granted()  {
   tM.disable();
   tDF.disable();
-  but_led(3);
-  GoodSound();
   tU.enable();
+  but_led(3);
   flash_led(1);
-  digitalWrite(SSR_Machine, HIGH);
-  lcd.setCursor(0, 2); lcd.print("Access granted      ");
+  GoodSound();
   secCount = 0;
-  if (gateNR < 6 || gateNR > 8) {
-    tGP.disable();
+  if (gateNR < 6 || gateNR > 9) {
+    gateME = LOW;
+    digitalWrite(SSR_Machine, HIGH);
+    lcd.setCursor(0, 2); lcd.print("Access granted      ");
   } else {
-    tGP.enable();
+    if (!gateME) {
+      Serial.println("LI"+ String(gateNR));
+      lcd.setCursor(0, 2); lcd.print("Gate Pos.?? Access??");
+    }
+    gateME = HIGH;
   }
 }
 
 // Switch off machine and stop
 void shutdown(void) {
   tU.disable();
-  tGP.disable();
   timer = 0;
   but_led(2);
   digitalWrite(SSR_Machine, LOW);
@@ -508,9 +468,12 @@ void shutdown(void) {
   flash_led(1);
   tM.enable();  // added by DieterH on 18.10.2017
   stepsCM = 0;
+  gateME = LOW;
   // Display change
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("System shut down at");
+  if (gateNR > 0) Serial.println("LO"+ String(gateNR));
+
 }
 
 void but_led(int var) {
@@ -585,6 +548,7 @@ void displayON() {
   tM.setInterval(TASK_SECOND / 2);
   lcd.setBacklight(BACKLIGHTon);
   intervalRFID = 0;
+  tB.disable();
   tM.enable();
 }
 
@@ -600,33 +564,20 @@ void pushClean() {
         } else {
           but_led(1);
         }
-        if (pushCount > intervalPush) {
-          if (gateNR > 0 && gateCLOSE && !gateOPEN) {
-            Serial.println("OG"+ String(gateNR));
-            gateSET = HIGH;
-            gateOPEN = HIGH;
-            gateCLOSE = LOW;
-          }
+        if (gateNR == 0 && pushCount > intervalPush) {
           digitalWrite(SSR_Vac, HIGH);
           pushCount = 0;
           steps4push = 1;
           but_led(1);
         }
       } else {
-        but_led(1);
         pushCount = 0;
       }
       break;
     case 1:
       flash_led(3);
       ++pushCount;
-      if ((buttons & BUTTON_P2 && pushCount > intervalCLMn) || pushCount > intervalCLMx) {
-        if (gateNR > 0 && !gateCLOSE && gateOPEN) {
-          Serial.println("CG"+ String(gateNR));
-          gateSET = HIGH;
-          gateOPEN = LOW;
-          gateCLOSE = HIGH;
-        }
+      if ((gateNR == 0 && buttons & BUTTON_P2 && pushCount > intervalCLMn) || pushCount > intervalCLMx) {
         digitalWrite(SSR_Vac, LOW);
         pushCount = 0;
         steps4push = 0;
@@ -665,39 +616,15 @@ void evalSerialData() {
     }
   }
 
-  if (inStr.startsWith("MA")) {
+  if (inStr.startsWith("MA") && inStr.length() == 4) {
     Serial.println("ATCN");
     IDENT = inStr;
     gateNR = inStr.substring(2).toInt();
-    if (gateNR < 6 || gateNR > 8) gateNR = 0; gateSET = LOW;
-  }
-
-  if (gateNR > 0) {
-    if (inStr.startsWith("G") && inStr.endsWith("O") && inStr.length() == 3) { //
-      if (inStr.substring(1, 2).toInt() == gateNR) {
-        gateOPEN = HIGH;
-        gateCLOSE = LOW;
-        gateSET = LOW;
-        flash_led(1);
-      }
-    }
-
-    if (inStr.startsWith("G") && inStr.endsWith("C") && inStr.length() == 3) { //
-      if (inStr.substring(1,2).toInt() == gateNR) {
-        gateOPEN = LOW;
-        gateCLOSE = HIGH;
-        gateSET = LOW;
-        flash_led(1);
-      }
-    }
-
-    if (inStr.startsWith("NG") && inStr.length() == 3) { //
-      if (inStr.substring(2).toInt() == gateNR) {
-        gateOPEN = LOW;
-        gateCLOSE = LOW;
-        gateSET = LOW;
-        flash_led(1);
-      }
+    if (gateNR < 6 || gateNR > 9) {
+      gateNR = 0;
+      noGATE = HIGH;
+    } else {
+      noGATE = LOW;
     }
   }
 
@@ -735,6 +662,75 @@ void evalSerialData() {
 
   if (inStr.startsWith("SETCL")) { // set Current Level for switching on and off
     CURLEV = inStr.substring(5).toInt();
+  }
+
+  if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates
+    if (inStr.startsWith("G") && inStr.endsWith("O") && inStr.length() == 3) {
+      if (inStr.substring(1, 2).toInt() == gateNR) {
+        gatERR = 0;
+        flash_led(1);
+        lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
+        digitalWrite(SSR_Machine, HIGH);
+      }
+    }
+
+    if (inStr.startsWith("G") && inStr.endsWith("C") && inStr.length() == 3) {
+      if (inStr.substring(1,2).toInt() == gateNR) {
+        gatERR = 0;
+        flash_led(4);
+        lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
+        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+        delay(50);
+        flash_led(1);
+      }
+    }
+
+    if (inStr.startsWith("ERR:G") && inStr.endsWith("O") && inStr.length() == 7) {
+      if (inStr.substring(5, 6).toInt() == gateNR) {
+        ++gatERR;
+        lcd.setCursor(0, 2); lcd.print("OPEN Gate Nr: " + String(gateNR) + "     ");
+        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+        if (gatERR % 3 == 0) {
+          flash_led(3);
+        } else {
+          flash_led(2);
+        }
+      }
+    }
+
+    if (inStr.startsWith("ERR:G") && inStr.endsWith("C") && inStr.length() == 7) {
+      if (inStr.substring(5, 6).toInt() == gateNR) {
+        ++gatERR;
+        lcd.setCursor(0, 2); lcd.print("CLOSE Gate Nr: " + String(gateNR) + "    ");
+        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+        if (gatERR % 3 == 0) {
+          flash_led(2);
+        } else {
+          flash_led(3);
+        }
+      }
+    }
+
+    if (inStr.startsWith("ERR:G") && inStr.endsWith("C") && inStr.length() == 7) {
+      if (inStr.substring(5, 6) == "H") {
+        ++gatERR;
+        lcd.setCursor(0, 2); lcd.print("CLOSE Gate Hand     ");
+        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+        if (gatERR % 3 == 0) {
+          flash_led(2);
+        } else {
+          flash_led(3);
+        }
+      }
+    }
+
+  } else {
+    if (inStr.startsWith("NG") && inStr.length() == 3) {
+      if (inStr.substring(2).toInt() == gateNR) {
+        noGATE = HIGH;
+        flash_led(1);
+      }
+    }
   }
   inStr = "";
 }
