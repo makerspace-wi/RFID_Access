@@ -339,6 +339,7 @@ void DispOFF() {
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
   but_led(1);
+  flash_led(1);
 }
 
 // Current measure -----
@@ -656,27 +657,24 @@ void evalSerialData() {
   }
 
   if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates
-    if (inStr.startsWith("G") && inStr.length() == 3) {
+    if (inStr.startsWith("G") && inStr.length() == 3 && inStr.substring(1, 2).toInt() == gateNR) {
       gatERR = 0;
       if (inStr.endsWith("O")) {
-        if (inStr.substring(1, 2).toInt() == gateNR) {
-          lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
-          digitalWrite(SSR_Machine, HIGH);
-        }
+        lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
+        digitalWrite(SSR_Machine, HIGH);
       }
 
       if (inStr.endsWith("C")) {
-        if (inStr.substring(1,2).toInt() == gateNR) {
-          lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
-          if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
-          flash_led(4);
-          delay(50);
-        }
+        // lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
+        lcd.setCursor(0, 2); lcd.print("                    ");
+        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+        flash_led(4);
+        delay(50);
       }
       flash_led(1);
     }
 
-    if (inStr.startsWith("ERR:G") && inStr.length() == 7) {
+    if (inStr.startsWith("ERR:G") && inStr.length() == 7 && displayIsON) {
       ++gatERR;
       if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
       if (inStr.endsWith("O") && inStr.substring(5, 6).toInt() == gateNR) {
@@ -705,7 +703,7 @@ void evalSerialData() {
           flash_led(3);
         }
       }
-      displayON();
+      if (!gateME) tDF.restartDelayed(TASK_SECOND * 30);
     }
 
   } else {
