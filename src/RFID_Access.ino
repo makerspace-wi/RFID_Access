@@ -95,7 +95,7 @@ byte I2CTransmissionResult = 0;
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
 #define currMean        3 // [ 3] current average over ...
-#define intervalMAX     5 // <max wait time for RFID select
+#define intervalMAX     1 // <max wait time for RFID select
 #define intervalINC	 3600 // 3600 * 4
 #define intervalPush    5 // seconds to push button before clean starts
 #define intervalCLMn   30 // min clean time in seconds
@@ -139,7 +139,6 @@ unsigned long code;
 byte atqa[2];
 byte atqaLen = sizeof(atqa);
 byte intervalRFID = 0;      // 0 = off; from 1 sec to 6 sec after Displayoff
-unsigned int secCount = 0;  // change interval in 3600 sec
 // Cleaner Control
 bool displayIsON = false;   // if display is switched on = true
 bool isCleaner  = false;    // is cleaner under control (installed)
@@ -279,13 +278,6 @@ void MainCallback() {   // 500ms Tick
     lcd.setCursor(0, 0); lcd.print("Card# "); lcd.print(code);
     displayON();
   }
-  if (intervalRFID > 0 && intervalRFID < intervalMAX) {
-    secCount = secCount + intervalRFID;
-    if (secCount % intervalINC == 0) {
-      ++intervalRFID;
-      tM.setInterval(TASK_SECOND * intervalRFID);
-    }
-  }
 
   if (gateNR == 0 && isCleaner && !displayIsON) {
     tB.setCallback(pushClean);
@@ -342,8 +334,7 @@ void FlashCallback() {
 
 void DispOFF() {
   displayIsON = false;
-  intervalRFID = 1;
-  secCount = 0;
+  intervalRFID = intervalMAX;  // 1;
   tM.setInterval(TASK_SECOND * intervalRFID);
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
@@ -415,6 +406,7 @@ void noreg() {
   lcd.setCursor(0, 2); lcd.print("Tag not registered");
   lcd.setCursor(0, 3); lcd.print("===> No access! <===");
   tM.enable();
+  gateME = LOW;
 }
 
 void OnTimed(long min)  {   // Turn on machine for nnn minutes
@@ -442,7 +434,6 @@ void granted()  {
   but_led(3);
   flash_led(1);
   GoodSound();
-  secCount = 0;
   if (gateNR < 6 || gateNR > 9) {
     gateME = LOW;
     digitalWrite(SSR_Machine, HIGH);
@@ -665,63 +656,56 @@ void evalSerialData() {
   }
 
   if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates
-    if (inStr.startsWith("G") && inStr.endsWith("O") && inStr.length() == 3) {
-      if (inStr.substring(1, 2).toInt() == gateNR) {
-        gatERR = 0;
-        flash_led(1);
-        lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
-        digitalWrite(SSR_Machine, HIGH);
+    if (inStr.startsWith("G") && inStr.length() == 3) {
+      gatERR = 0;
+      if (inStr.endsWith("O")) {
+        if (inStr.substring(1, 2).toInt() == gateNR) {
+          lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
+          digitalWrite(SSR_Machine, HIGH);
+        }
       }
+
+      if (inStr.endsWith("C")) {
+        if (inStr.substring(1,2).toInt() == gateNR) {
+          lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
+          if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+          flash_led(4);
+          delay(50);
+        }
+      }
+      flash_led(1);
     }
 
-    if (inStr.startsWith("G") && inStr.endsWith("C") && inStr.length() == 3) {
-      if (inStr.substring(1,2).toInt() == gateNR) {
-        gatERR = 0;
-        flash_led(4);
-        lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
-        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
-        delay(50);
-        flash_led(1);
-      }
-    }
-
-    if (inStr.startsWith("ERR:G") && inStr.endsWith("O") && inStr.length() == 7) {
-      if (inStr.substring(5, 6).toInt() == gateNR) {
-        ++gatERR;
+    if (inStr.startsWith("ERR:G") && inStr.length() == 7) {
+      ++gatERR;
+      if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
+      if (inStr.endsWith("O") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("OPEN Gate Nr: " + String(gateNR) + "     ");
-        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
         if (gatERR % 3 == 0) {
           flash_led(3);
         } else {
           flash_led(2);
         }
       }
-    }
 
-    if (inStr.startsWith("ERR:G") && inStr.endsWith("C") && inStr.length() == 7) {
-      if (inStr.substring(5, 6).toInt() == gateNR) {
-        ++gatERR;
+      if (inStr.endsWith("C") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Nr: " + String(gateNR) + "    ");
-        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
         if (gatERR % 3 == 0) {
           flash_led(2);
         } else {
           flash_led(3);
         }
       }
-    }
 
-    if (inStr.startsWith("ERR:G") && inStr.endsWith("C") && inStr.length() == 7) {
-      if (inStr.substring(5, 6) == "H") {
-        ++gatERR;
+      if (inStr.endsWith("C") && inStr.substring(5, 6) == "H") {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Hand     ");
-        if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
         if (gatERR % 3 == 0) {
           flash_led(2);
         } else {
           flash_led(3);
         }
       }
+      displayON();
     }
 
   } else {
