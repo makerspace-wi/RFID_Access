@@ -454,6 +454,7 @@ void shutdown(void) {
   timer = 0;
   but_led(2);
   digitalWrite(SSR_Machine, LOW);
+  digitalWrite(SSR_Vac, LOW);
   Serial.println(String(IDENT) + ";off");
   tDF.restartDelayed(TASK_SECOND * 30);
   BadSound();
