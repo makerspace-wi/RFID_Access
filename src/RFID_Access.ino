@@ -13,22 +13,25 @@
   'Ident;off'  - machine reporting OFF-Status
   'card;nn...' - uid_2 from reader
   ---------- (_=6,7,8,9)
-  'li_'   - log in for machine
-  'lo_'   - log out for machine
-  'do_'   - Dust collector On for machine
-  'df_'   - Dust collector oFf for machine
-  'ng_'   - No Gate is available
+  'li_'    - log in for machine
+  'lo_'    - log out for machine
+  'do_'    - Dust collector On for machine
+  'df_'    - Dust collector oFf for machine
+  'ng_'    - No Gate is available
 
   Commands from Raspi
-  'time'  - format time33.33.3333 33:33:33
-  'onp'   - Machine permanent ON
-  'ontxx' - Machine xxx minutes ON
-  'off'   - Machine OFF
-  'noreg' - uid_2 not registered
+  'time'   - format time33.33.3333 33:33:33
+  'onp'    - Machine permanent ON
+  'ontxx'  - Machine xxx minutes ON
+  'off'    - Machine OFF
+  'noreg'  - uid_2 not registered
 
-  'setce' - set time before ClosE machine
-  'setcn' - set time for longer CleaN on
-  'setcl' - set Current Level for switching on and off
+  'setce'  - set time before ClosE machine
+  'setcn'  - set time for longer CleaN on
+  'setcl'  - set Current Level for switching on and off
+  'dison'  - display on for 60 setCursor
+  'r3t...' - display text in row 3 "r3tabcde12345", max 20
+  'r4t...' - display text in row 4 "r4tabcde12345", max 20
   ---------- (_=6,7,8,9)
   'g_o'   - Gate is Open
   'gho'   - Gate By hand is open (Manuell)
@@ -39,13 +42,13 @@
   'err'   - Error message is following ('ERR:G7O')
   'gok'   - all blast gates are ok, in write position
 
-  last change: 25.08.2019 by Michael Muehl
+  last change: 04.09.2019 by Michael Muehl
   changed: changed current measurme, genarate switch level for bolwer
-           changed RFID detection from 1sec to 6 sec in 2 hours
+           changed RFID detection from 0,5sec to 1 sec
            add gate control only for MA06 - MA09
            add separate switching cleaner if present (display is dark)
 */
-#define Version "9.5" // (Test =e ==> 6)
+#define Version "9.5" // (Test =.x ==> .6)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -160,6 +163,7 @@ unsigned int CURLEV = 0;      // RAM cell for before activation is off
 // current measurement (cleaning on):
 unsigned int currentVal =0;   // mean value
 unsigned int currentMax =0;   // read max value
+int currNR  = 0;              // number off machine with current detection
 byte stepsCM = 0;             // steps for current measurement
 byte countCM = 0;             // counter for current measurement
 
@@ -357,7 +361,7 @@ void Current() {   // 500ms Tick
       break;
     case 1:   // current > level
       if (currentVal > CURLEV) {
-        if (gateNR > 0) Serial.println("DO"+ String(gateNR));
+        Serial.println("DO"+ String(currNR));
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 2;
       }
@@ -374,7 +378,7 @@ void Current() {   // 500ms Tick
       break;
     case 3:   // current > level
       if (currentVal > CURLEV) {
-        if (gateNR > 0) Serial.println("DO"+ String(gateNR));
+        Serial.println("DO"+ String(currNR));
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 4;
       }
@@ -390,7 +394,7 @@ void Current() {   // 500ms Tick
       }
       break;
     case 5:   // switch off clean after x sec later
-      if (gateNR > 0) Serial.println("DF"+ String(gateNR));
+      Serial.println("DF"+ String(currNR));
       digitalWrite(SSR_Vac, LOW);
       stepsCM = 3;
       break;
@@ -465,7 +469,7 @@ void shutdown(void) {
   // Display change
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("System shut down at");
-  if (gateNR > 0) Serial.println("LO"+ String(gateNR));
+  if (gateNR > 0 && !noGATE) Serial.println("LO"+ String(gateNR));
 
 }
 
@@ -613,6 +617,7 @@ void evalSerialData() {
     Serial.println("ATCN");
     IDENT = inStr;
     gateNR = inStr.substring(2).toInt();
+    currNR = gateNR;
     if (gateNR < 6 || gateNR > 9) {
       gateNR = 0;
       noGATE = HIGH;
@@ -655,6 +660,23 @@ void evalSerialData() {
 
   if (inStr.startsWith("SETCL")) { // set Current Level for switching on and off
     CURLEV = inStr.substring(5).toInt();
+  }
+
+  if (inStr.startsWith("DISON") && !digitalRead(SSR_Machine)) { // set Current Level for switching on and off
+    displayON();
+    tDF.restartDelayed(TASK_SECOND * 60);
+  }
+
+  if (inStr.substring(0, 3) == "R3T" && inStr.length() >3) {  // print to LCD row 3
+    inStr.concat("                   ");     // add blanks to string
+    lcd.setCursor(0,2);
+    lcd.print(inStr.substring(3,23)); // cut string lenght to 20 char
+  }
+
+  if (inStr.substring(0, 3) == "R4T" && inStr.length() >3) {  // print to LCD row 4
+    inStr.concat("                   ");     // add blanks to string
+    lcd.setCursor(0,3);
+    lcd.print(inStr.substring(3,23));   // cut string lenght to 20 char  changed by MM 10.01.2018
   }
 
   if (inStr.startsWith("NG") && inStr.length() == 3) {
