@@ -45,7 +45,7 @@
            add gate control only for MA06 - MA09
            add separate switching cleaner if present (display is dark)
 */
-#define Version "9.e" // 5 (Test)
+#define Version "9.5" // (Test =e ==> 6)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -435,7 +435,7 @@ void granted()  {
   but_led(3);
   flash_led(1);
   GoodSound();
-  if (gateNR < 6 || gateNR > 9) {
+  if (gateNR < 6 || gateNR > 9 || noGATE) {
     gateME = LOW;
     digitalWrite(SSR_Machine, HIGH);
     lcd.setCursor(0, 2); lcd.print("Access granted      ");
@@ -657,6 +657,15 @@ void evalSerialData() {
     CURLEV = inStr.substring(5).toInt();
   }
 
+  if (inStr.startsWith("NG") && inStr.length() == 3) {
+    if (inStr.substring(2).toInt() == gateNR) {
+      noGATE = HIGH;
+      flash_led(4);
+      delay(20);
+      flash_led(1);
+    }
+  }
+
   if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates
     if (inStr.startsWith("G") && inStr.length() == 3 && inStr.substring(1, 2).toInt() == gateNR) {
       gatERR = 0;
@@ -705,14 +714,6 @@ void evalSerialData() {
         }
       }
       if (!gateME) tDF.restartDelayed(TASK_SECOND * 30);
-    }
-
-  } else {
-    if (inStr.startsWith("NG") && inStr.length() == 3) {
-      if (inStr.substring(2).toInt() == gateNR) {
-        noGATE = HIGH;
-        flash_led(1);
-      }
     }
   }
   inStr = "";
