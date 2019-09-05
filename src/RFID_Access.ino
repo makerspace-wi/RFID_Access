@@ -48,7 +48,7 @@
            add gate control only for MA06 - MA09
            add separate switching cleaner if present (display is dark)
 */
-#define Version "9.5" // (Test =.x ==> .6)
+#define Version "9.5" // (Test =9.x ==> 9.6)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
