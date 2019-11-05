@@ -116,8 +116,11 @@ void BlinkCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
 void FlashCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
 void DispOFF();          // Task to switch display off after time
 void BuzzerOn();         // added by DieterH on 22.10.2017
+// Functions define for C++
 void OnTimed(long);
 void flash_led(int);
+void ErrorOPEN();
+void ErrorCLOSE();
 
 void Current();         // current measurement and detection
 
@@ -128,6 +131,7 @@ Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
 Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
 Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
 Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
+Task tER(1, TASK_ONCE, &ErrorOPEN);                     // error blinking
 
 // --- Current measurement --
 Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current);       // current measure
@@ -204,6 +208,7 @@ void setup() {
   runner.addTask(tBeeper);
   runner.addTask(tBD);
   runner.addTask(tDF);
+  runner.addTask(tER);
 
 // Current --------
   runner.addTask(tC);
@@ -334,6 +339,14 @@ void BlinkCallback() {
 
 void FlashCallback() {
   flash_led(1);
+}
+
+void ErrorOPEN() {
+  flash_led(2);
+}
+
+void ErrorCLOSE() {
+  flash_led(3);
 }
 
 void DispOFF() {
@@ -711,29 +724,23 @@ void evalSerialData() {
       if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
       if (inStr.endsWith("O") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("OPEN Gate Nr: " + String(gateNR) + "     ");
-        if (gatERR % 3 == 0) {
-          flash_led(3);
-        } else {
-          flash_led(2);
-        }
+        flash_led(3);
+        tER.setCallback(&ErrorOPEN);
+        tER.restartDelayed(250);
       }
 
       if (inStr.endsWith("C") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Nr: " + String(gateNR) + "    ");
-        if (gatERR % 3 == 0) {
-          flash_led(2);
-        } else {
-          flash_led(3);
-        }
+        flash_led(2);
+        tER.setCallback(&ErrorCLOSE);
+        tER.restartDelayed(250);
       }
 
       if (inStr.endsWith("C") && inStr.substring(5, 6) == "H") {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Hand     ");
-        if (gatERR % 3 == 0) {
-          flash_led(2);
-        } else {
-          flash_led(3);
-        }
+        flash_led(2);
+        tER.setCallback(&ErrorCLOSE);
+        tER.restartDelayed(250);
       }
       if (!gateME) tDF.restartDelayed(TASK_SECOND * 30);
     }
