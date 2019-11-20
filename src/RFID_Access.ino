@@ -29,6 +29,7 @@
   'setce'  - set time before ClosE machine
   'setcn'  - set time for longer CleaN on
   'setcl'  - set Current Level for switching on and off
+  'setrt'  - set RepeaT messages
   'dison'  - display on for 60 setCursor
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
@@ -37,18 +38,13 @@
   'gho'   - Gate By hand is open (Manuell)
   'g_c'   - Gate is Closed
   'ghc'   - gate By hand is closed
-  'g_x'   - Gate position not defined: X
-  'ghx'   - Gate Hand position not defined: X
   'err'   - Error message is following ('ERR:G7O')
-  'gok'   - all blast gates are ok, in write position
+  'gok'   - all blast gates are ok, in right position
 
-  last change: 04.09.2019 by Michael Muehl
-  changed: changed current measurme, genarate switch level for bolwer
-           changed RFID detection from 0,5sec to 1 sec
-           add gate control only for MA06 - MA09
-           add separate switching cleaner if present (display is dark)
+  last change: 20.11.2019 by Michael Muehl
+  changed: changed comunucation MA6-9 with blastgate: repeat messages
 */
-#define Version "9.5" // (Test =9.x ==> 9.6)
+#define Version "9.6" // (Test =9.x ==> 9.6)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -93,6 +89,7 @@ byte I2CTransmissionResult = 0;
 
 // DEFINES
 #define porTime         5 // wait seconds for sending Ident + POR
+#define repMES          1 // repeat commands
 #define CLOSE2END      15 // MINUTES before activation is off
 #define CLEANON         4 // TASK_SECOND vac on for a time
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
@@ -111,30 +108,34 @@ MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
 
 // Callback methods prototypes
 void checkXbee();        // Task connect to xBee Server
-void UnLoCallback();     // Task to Unlock machine
 void BlinkCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
+void UnLoCallback();     // Task to Unlock machine
+void repeatMES();        // Task to repeat messages
+
+void BuzzerOn();         // added by DieterH on 22.10.2017
 void FlashCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
 void DispOFF();          // Task to switch display off after time
-void BuzzerOn();         // added by DieterH on 22.10.2017
+
+void Current();         // current measurement and detection
 // Functions define for C++
 void OnTimed(long);
 void flash_led(int);
 void ErrorOPEN();
 void ErrorCLOSE();
 
-void Current();         // current measurement and detection
-
 // TASKS
 Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms
-Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // added M. Muehl
-Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);
-Task tBeeper(TASK_SECOND / 10, 6, &BuzzerOn);           // 100ms added by DieterH on 22.10.2017
+Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
+Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);  // 500ms
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
+
+Task tBU(TASK_SECOND / 10, 6, &BuzzerOn);               // 100ms 6x =600ms added by DieterH on 22.10.2017
 Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
 Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
-Task tER(1, TASK_ONCE, &ErrorOPEN);                     // error blinking
+Task tER(1, 2, &ErrorOPEN);                             // error blinking
 
 // --- Current measurement --
-Task tC(TASK_SECOND / 2, TASK_FOREVER, &Current);       // current measure
+Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
 
 // VARIABLES
 unsigned long val;
@@ -154,8 +155,9 @@ unsigned int pushCount = 0; // counter how long push button in action
 // Gate control
 boolean noGATE = HIGH;      // bit no gate = HIGH
 boolean gateME = LOW;       // bit gate MEssage = LOW (no message)
+boolean togLED = LOW;       // bit toggle LEDs
 int gateNR = 0;             // "0" = no gates, 6,7,8,9 with gate
-int gatERR = 0;             // count gate ERRor > 0  (Modulo 2 on / off = Blink)
+int gatERR = 0;             // count gate ERRor > 0 = Blink)
 
 // Variables can be set externaly: ---
 // --- on timed, time before new activation
@@ -172,9 +174,10 @@ byte stepsCM = 0;             // steps for current measurement
 byte countCM = 0;             // counter for current measurement
 
 // Serial with xBee
-String inStr = "";  // a string to hold incoming data
-String IDENT = "";  // Machine identifier for remote access control
-byte plplpl = 0;    // send +++ control AT sequenz
+String inStr = "";      // a string to hold incoming data
+String IDENT = "";      // Machine identifier for remote access control
+String SFMes = "";      // String send for repeatMES
+byte plplpl = 0;        // send +++ control AT sequenz
 byte getTime = porTime;
 
 // ======>  SET UP AREA <=====
@@ -203,15 +206,16 @@ void setup() {
 
   runner.init();
   runner.addTask(tM);
-  runner.addTask(tU);
   runner.addTask(tB);
-  runner.addTask(tBeeper);
+  runner.addTask(tR);
+  runner.addTask(tU);
+  runner.addTask(tBU);
   runner.addTask(tBD);
   runner.addTask(tDF);
   runner.addTask(tER);
 
 // Current --------
-  runner.addTask(tC);
+  runner.addTask(tCU);
 
   // I2C _ Ports definition only for test if I2C is avilable
   Wire.beginTransmission(I2CPort);
@@ -233,7 +237,7 @@ void setup() {
     dispRFID();
     Serial.print("+++"); //Starting the request of IDENT
     tM.enable();  // xBee check
-    tC.enable();  // Current
+    tCU.enable(); // Current
   } else {
     tB.enable();  // enable Task Error blinking
     tB.setInterval(TASK_SECOND);
@@ -259,8 +263,8 @@ void retryPOR() {
     lcd.setCursor(0, 0); lcd.print(String(IDENT) + " ");
     lcd.setCursor(16, 1); lcd.print((getTime - porTime) * porTime);
   }
-  else if (getTime == 255)
-  {
+  else if (getTime == 255) {
+	  tR.setIterations(repMES);
     tM.setCallback(MainCallback);
     tM.enable();
     tB.disable();
@@ -269,8 +273,7 @@ void retryPOR() {
 }
 
 void MainCallback() {   // 500ms Tick
-  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
-  {
+  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
     code = 0;
     for (byte i = 0; i < mfrc522.uid.size; i++) {
       code = ((code + mfrc522.uid.uidByte[i]) * 10);
@@ -332,6 +335,12 @@ void UnLoCallback() {   // 500ms Tick
   }
 }
 
+// Task repeatMES: ------------------------
+void repeatMES() {
+  // --repeat messages from machines
+  Serial.println(String(SFMes));
+}
+
 void BlinkCallback() {
   // --Blink if BUS Error
   digitalWrite(BUSError, !digitalRead(BUSError));
@@ -342,11 +351,31 @@ void FlashCallback() {
 }
 
 void ErrorOPEN() {
-  flash_led(2);
+  if (gatERR > 0) {
+    if (togLED) {
+      tER.restartDelayed(250);
+      flash_led(3);
+      togLED = !togLED;
+    } else {
+      tER.restartDelayed(750);
+      flash_led(2);
+      togLED = !togLED;
+    }
+  }
 }
 
 void ErrorCLOSE() {
-  flash_led(3);
+  if (gatERR > 0) {
+    if (togLED) {
+      tER.restartDelayed(250);
+      flash_led(2);
+      togLED = !togLED;
+    } else {
+      tER.restartDelayed(750);
+      flash_led(3);
+      togLED = !togLED;
+    }
+  }
 }
 
 void DispOFF() {
@@ -374,7 +403,11 @@ void Current() {   // 500ms Tick
       break;
     case 1:   // current > level
       if (currentVal > CURLEV) {
-        Serial.println("DO"+ String(currNR));
+        SFMes = "DO"+ String(currNR);
+        Serial.println(SFMes);
+        if (gateNR > 0 && !noGATE) {
+          tR.restart();
+        }
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 2;
       }
@@ -391,7 +424,11 @@ void Current() {   // 500ms Tick
       break;
     case 3:   // current > level
       if (currentVal > CURLEV) {
-        Serial.println("DO"+ String(currNR));
+        SFMes = "DO"+ String(currNR);
+        Serial.println(SFMes);
+        if (gateNR > 0 && !noGATE) {
+          tR.restart();
+        }
         digitalWrite(SSR_Vac, HIGH);
         stepsCM = 4;
       }
@@ -407,7 +444,11 @@ void Current() {   // 500ms Tick
       }
       break;
     case 5:   // switch off clean after x sec later
-      Serial.println("DF"+ String(currNR));
+      SFMes = "DF"+ String(currNR);
+      Serial.println(SFMes);
+      if (gateNR > 0 && !noGATE) {
+        tR.restart();
+      }
       digitalWrite(SSR_Vac, LOW);
       stepsCM = 3;
       break;
@@ -427,7 +468,7 @@ void noreg() {
   gateME = LOW;
 }
 
-void OnTimed(long min)  {   // Turn on machine for nnn minutes
+void OnTimed(long min) {   // Turn on machine for nnn minutes
   onTime = true;
   timer = timer + min * 120;
   Serial.println(String(IDENT) + ";ont");
@@ -453,12 +494,15 @@ void granted()  {
   flash_led(1);
   GoodSound();
   if (gateNR < 6 || gateNR > 9 || noGATE) {
-    gateME = LOW;
     digitalWrite(SSR_Machine, HIGH);
     lcd.setCursor(0, 2); lcd.print("Access granted      ");
+    tR.disable();
+    gateME = LOW;
   } else {
     if (!gateME) {
-      Serial.println("LI"+ String(gateNR));
+      SFMes = "LI"+ String(gateNR);
+      Serial.println(SFMes);
+      tR.restart();
       lcd.setCursor(0, 2); lcd.print("Gate Pos.?? Access??");
     }
     gateME = HIGH;
@@ -482,8 +526,11 @@ void shutdown(void) {
   // Display change
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("System shut down at");
-  if (gateNR > 0 && !noGATE) Serial.println("LO"+ String(gateNR));
-
+  if (gateNR > 0 && !noGATE) {
+    SFMes = "LO"+ String(gateNR);
+    Serial.println(SFMes);
+    tR.restart();
+  }
 }
 
 void but_led(int var) {
@@ -526,19 +573,19 @@ void flash_led(int var) {
 
 void BuzzerOff()  {
   lcd.pinLEDs(buzzerPin, LOW);
-  tBeeper.setCallback(&BuzzerOn);
+  tBU.setCallback(&BuzzerOn);
 }
 
 void BuzzerOn()  {
   lcd.pinLEDs(buzzerPin, HIGH);
-  tBeeper.setCallback(&BuzzerOff);
+  tBU.setCallback(&BuzzerOff);
 }
 
 void BadSound(void) {   // added by DieterH on 22.10.2017
-  tBeeper.setInterval(100);
-  tBeeper.setIterations(6); // I think it must be Beeps * 2?
-  tBeeper.setCallback(&BuzzerOn);
-  tBeeper.enable();
+  tBU.setInterval(100);
+  tBU.setIterations(6); // I think it must be Beeps * 2?
+  tBU.setCallback(&BuzzerOn);
+  tBU.enable();
 }
 
 void GoodSound(void) {
@@ -639,23 +686,23 @@ void evalSerialData() {
     }
   }
 
+  if (inStr.startsWith("TIME") && stepsCM <=3) {
+    lcd.setCursor(0, 1); lcd.print(inStr.substring(4));
+    tB.setInterval(500);
+    getTime = 255;
+  }
+
   if (inStr.startsWith("ONT") && inStr.length() >=4) {
     val = inStr.substring(3).toInt();
     OnTimed(val);
   }
 
-  if (inStr.startsWith("ONP")) {
+  if (inStr.startsWith("ONP") && inStr.length() ==3) {
     OnPerm();
   }
 
-  if (inStr.startsWith("OFF")) {
+  if (inStr.startsWith("OFF") && inStr.length() ==3) {
     shutdown(); // Turn OFF Machine
-  }
-
-  if (inStr.startsWith("TIME") && stepsCM <=3) {
-    lcd.setCursor(0, 1); lcd.print(inStr.substring(4));
-    tB.setInterval(500);
-    getTime = 255;
   }
 
   if (inStr.startsWith("NOREG")) {
@@ -670,12 +717,15 @@ void evalSerialData() {
     CLEAN = inStr.substring(5).toInt();
   }
 
+  if (inStr.startsWith("SETRT")) { // set repeat messages
+    tR.setIterations(inStr.substring(5).toInt());
+  }
 
   if (inStr.startsWith("SETCL")) { // set Current Level for switching on and off
     CURLEV = inStr.substring(5).toInt();
   }
 
-  if (inStr.startsWith("DISON") && !digitalRead(SSR_Machine)) { // set Current Level for switching on and off
+  if (inStr.startsWith("DISON") && !digitalRead(SSR_Machine)) { // Switch display on for 60 sec
     displayON();
     tDF.restartDelayed(TASK_SECOND * 60);
   }
@@ -692,7 +742,7 @@ void evalSerialData() {
     lcd.print(inStr.substring(3,23));   // cut string lenght to 20 char  changed by MM 10.01.2018
   }
 
-  if (inStr.startsWith("NG") && inStr.length() == 3) {
+  if (inStr.startsWith("NG") && inStr.length() == 3) { // set maschine to gate not available
     if (inStr.substring(2).toInt() == gateNR) {
       noGATE = HIGH;
       flash_led(4);
@@ -701,48 +751,45 @@ void evalSerialData() {
     }
   }
 
-  if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates
-    if (inStr.startsWith("G") && inStr.length() == 3 && inStr.substring(1, 2).toInt() == gateNR) {
-      gatERR = 0;
+  if (gateNR > 0 && !noGATE) { // > 0 = machine with common gates and gate not switched off
+    if (inStr.startsWith("G") && inStr.substring(1, 2).toInt() == gateNR && inStr.length() == 3) {
       if (inStr.endsWith("O")) {
         lcd.setCursor(0, 2); lcd.print("OPEN Access granted ");
         digitalWrite(SSR_Machine, HIGH);
+        gatERR = 0;
       }
 
       if (inStr.endsWith("C")) {
         // lcd.setCursor(0, 2); lcd.print("CLOSE ??? Access ???");
         lcd.setCursor(0, 2); lcd.print("                    ");
         if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
-        flash_led(4);
-        delay(50);
+        gatERR = 0;
       }
       flash_led(1);
     }
 
     if (inStr.startsWith("ERR:G") && inStr.length() == 7 && displayIsON) {
-      ++gatERR;
+      togLED = LOW;
       if (stepsCM <=3) digitalWrite(SSR_Machine, LOW);
       if (inStr.endsWith("O") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("OPEN Gate Nr: " + String(gateNR) + "     ");
-        flash_led(3);
         tER.setCallback(&ErrorOPEN);
-        tER.restartDelayed(250);
+        ++gatERR;
       }
 
       if (inStr.endsWith("C") && inStr.substring(5, 6).toInt() == gateNR) {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Nr: " + String(gateNR) + "    ");
-        flash_led(2);
         tER.setCallback(&ErrorCLOSE);
-        tER.restartDelayed(250);
+        ++gatERR;
       }
 
       if (inStr.endsWith("C") && inStr.substring(5, 6) == "H") {
         lcd.setCursor(0, 2); lcd.print("CLOSE Gate Hand     ");
-        flash_led(2);
         tER.setCallback(&ErrorCLOSE);
-        tER.restartDelayed(250);
+        ++gatERR;
       }
       if (!gateME) tDF.restartDelayed(TASK_SECOND * 30);
+      tER.restart();
     }
   }
   inStr = "";
