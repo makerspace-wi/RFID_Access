@@ -41,8 +41,9 @@
   'err'   - Error message is following ('ERR:G7O')
   'gok'   - all blast gates are ok, in right position
 
-  last change: 20.11.2019 by Michael Muehl
-  changed: changed comunucation MA6-9 with blastgate: repeat messages
+  last change: 29.12.2019 by Michael Muehl
+  changed: changed comunucation MA6-9 with blastgate: repeat messages 
+  and delete some double lines and set repeat time for RFID fix to 0,5 sec
 */
 #define Version "9.6" // (Test =9.x ==> 9.6)
 
@@ -95,7 +96,6 @@ byte I2CTransmissionResult = 0;
 #define periRead      100 // read 100ms analog input for 50Hz (Strom)
 #define currHyst       10 // [10] hystereses for current detection normal
 #define currMean        3 // [ 3] current average over ...
-#define intervalMAX     1 // <max wait time for RFID select
 #define intervalINC	 3600 // 3600 * 4
 #define intervalPush    5 // seconds to push button before clean starts
 #define intervalCLMn   30 // min clean time in seconds
@@ -116,7 +116,8 @@ void BuzzerOn();         // added by DieterH on 22.10.2017
 void FlashCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
 void DispOFF();          // Task to switch display off after time
 
-void Current();         // current measurement and detection
+void Current();          // current measurement and detection
+
 // Functions define for C++
 void OnTimed(long);
 void flash_led(int);
@@ -124,7 +125,7 @@ void ErrorOPEN();
 void ErrorCLOSE();
 
 // TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms main task
 Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
 Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);  // 500ms
 Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
@@ -226,14 +227,10 @@ void setup() {
   // I2C Bus mit slave vorhanden
   if (I2CFound != 0) {
     lcd.clear();
-    lcd.pinLEDs(StopLEDrt, HIGH);
-    lcd.pinLEDs(StopLEDgn, LOW);
-    lcd.pinLEDs(VLBUTTONLED, LOW);
-    flash_led(1);
-    lcd.pinLEDs(VLBUTTONLED, LOW);
     lcd.pinLEDs(buzzerPin, LOW);
-    but_led(1);
     lcd.pinLEDs(VLBUTTONLED, LOW);
+    but_led(1);
+    flash_led(1);
     dispRFID();
     Serial.print("+++"); //Starting the request of IDENT
     tM.enable();  // xBee check
@@ -265,14 +262,14 @@ void retryPOR() {
   }
   else if (getTime == 255) {
 	  tR.setIterations(repMES);
-    tM.setCallback(MainCallback);
+    tM.setCallback(checkRFID);
     tM.enable();
     tB.disable();
     displayON();
   }
 }
 
-void MainCallback() {   // 500ms Tick
+void checkRFID() {   // 500ms Tick
   if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
     code = 0;
     for (byte i = 0; i < mfrc522.uid.size; i++) {
@@ -380,8 +377,6 @@ void ErrorCLOSE() {
 
 void DispOFF() {
   displayIsON = false;
-  intervalRFID = intervalMAX;  // 1;
-  tM.setInterval(TASK_SECOND * intervalRFID);
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
   but_led(1);
@@ -602,7 +597,6 @@ void dispRFID(void) {
 
 void displayON() {
   displayIsON = true;
-  tM.setInterval(TASK_SECOND / 2);
   lcd.setBacklight(BACKLIGHTon);
   intervalRFID = 0;
   tB.disable();
