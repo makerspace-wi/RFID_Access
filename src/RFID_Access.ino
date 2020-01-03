@@ -41,9 +41,10 @@
   'err'   - Error message is following ('ERR:G7O')
   'gok'   - all blast gates are ok, in right position
 
-  last change: 29.12.2019 by Michael Muehl
+  last change: 03.01.2020 by Michael Muehl
   changed: changed comunucation MA6-9 with blastgate: repeat messages 
   and delete some double lines and set repeat time for RFID fix to 0,5 sec
+  add some reset after noreg
 */
 #define Version "9.6" // (Test =9.x ==> 9.6)
 
@@ -456,11 +457,13 @@ void Current() {   // 500ms Tick
 void noreg() {
   digitalWrite(SSR_Machine, LOW);
   digitalWrite(SSR_Vac, LOW);
-  BadSound();
   lcd.setCursor(0, 2); lcd.print("Tag not registered");
   lcd.setCursor(0, 3); lcd.print("===> No access! <===");
   tM.enable();
   gateME = LOW;
+  BadSound();
+  but_led(1);
+  flash_led(1);
 }
 
 void OnTimed(long min) {   // Turn on machine for nnn minutes
