@@ -52,7 +52,7 @@
 // Machine Control (ext)
 #define currMotor   A0  // Motor current (Machine)
 #define OUT_Machine A2  // OUT Machine on / off  (Machine)
-#define OUT_Dust     A3  // OUT Dust on / off  (Dust Collector)
+#define OUT_Dust    A3  // OUT Dust on / off  (Dust Collector)
 
 #define BUSError     8  // Bus error
 
