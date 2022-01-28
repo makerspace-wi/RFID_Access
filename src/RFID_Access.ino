@@ -676,7 +676,7 @@ void evalSerialData()
     noreg();  // changed by D. Haude on 18.10.2017
   }
 
-  if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 6) 
+  if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 8) 
   {
     val = inStr.substring(3).toInt();
     OnTimed(val);
