@@ -22,6 +22,8 @@
   'ontxx'  - Machine xxx minutes ON
   'off'    - Machine OFF
   'noreg'  - RFID-Chip not registed
+  'onDust' - Dust Collector on  (New)
+  'ofDust' - Dust Collector off (New)
 
   'setce'  - set time before ClosE machine
   'setcn'  - set time for longer CleaN on
@@ -34,7 +36,7 @@
   last change: 11.01.2022 by Michael Muehl
   changed: new commands for dust collector, loged in | out, machine on | off
 */
-#define Version "9.7.0" // (Test = 9.7.x ==> 9.7.0)
+#define Version "9.7.1" // (Test = 9.7.x ==> 9.7.2)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -689,7 +691,17 @@ void evalSerialData()
 
   if (inStr.startsWith("OFF") && inStr.length() ==3)
   {
-    shutdown(); // Turn OFF Machine
+    shutdown(); // Turn OFF Machine   digitalWrite(OUT_Dust, LOW);
+  }
+
+  if (inStr.startsWith("ONDUST") && inStr.length() ==6)
+  {
+    digitalWrite(OUT_Dust, HIGH);  
+  }
+
+  if (inStr.startsWith("OFDUST") && inStr.length() ==6)
+  {
+    digitalWrite(OUT_Dust, LOW);  
   }
 
   if (inStr.startsWith("SETCE"))
