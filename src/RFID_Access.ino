@@ -6,8 +6,8 @@
   switch on claener by current control and separate cleaner on
 
   Commands to Raspi --->
-  'MAxx'  - from xBee (=Ident)
-  'POR'   - machine power on reset (Ident;por)
+  xBeeName - from xBee (=Ident) [max 4 caracter including numbers] {xBeeName + nn}
+  'POR'    - machine power on reset (Ident;por)
 
   'Ident;on'   - machine reporting ON-Status
   'Ident;off'  - machine reporting OFF-Status
@@ -25,18 +25,21 @@
   'onDust' - Dust Collector on  (New)
   'ofDust' - Dust Collector off (New)
 
-  'setce'  - set time before ClosE machine
-  'setcn'  - set time for longer CleaN on
-  'setcl'  - set Current Level for switching on and off
-  'setrt'  - set RepeaT messages
-  'dison'  - display on for 60 setCursor
+  'setce'  - [15 min] set time before ClosE machine
+  'setcn'  - [6 sec] set time for longer CleaN on
+  'setcl'  - [0] set Current Level for switching on and off
+  'setrt'  - [1] set RepeaT messages
+  'dison'  - display on for 60 sec
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 11.01.2022 by Michael Muehl
-  changed: new commands for dust collector, loged in | out, machine on | off
+  last change: 26.04.2022 by Michael Muehl
+  changed: new commands for dust collector, loged in | out, machine on | off,
+           combine all commands and check messages, if kown and number is ok.
 */
-#define Version "9.7.1" // (Test = 9.7.x ==> 9.7.2)
+#define Version "9.7.2" // (Test = 9.7.x ==> 9.7.3)
+#define xBeeName "MA"   // Name and number for xBee
+#define checkFA      2  // event check for every (1 second / FActor)
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -56,7 +59,7 @@
 #define OUT_Machine A2  // OUT Machine on / off  (Machine)
 #define OUT_Dust    A3  // OUT Dust on / off  (Dust Collector)
 
-#define BUSError     8  // Bus error
+#define xBuError     8  // xBee and Bus error (13)
 
 // I2C IOPort definition
 byte I2CFound = 0;
@@ -80,17 +83,14 @@ byte I2CTransmissionResult = 0;
 #define BACKLIGHTon  0x1
 
 // DEFINES
-#define porTime         5 // wait seconds for sending Ident + POR
-#define CLOSE2END      15 // MINUTES before activation is off [Nom: 60]
-#define CLEANON         6 // TASK_SECOND dust collector on after current off
-#define repMES          1 // repeat commands
-#define periRead      100 // read 100ms analog input for 50Hz (Strom)
-#define currHyst       10 // [10] hystereses for current detection normal
-#define currMean        3 // [ 3] current average over ...
-#define intervalINC  3600 // 3600 * 4
-#define intervalPush    5 // seconds to push button before clean starts
-#define intervalCLMn   30 // min clean time in seconds
-#define intervalCLMx   10 * 60 // max clean time in seconds
+#define porTime         5 // [  5] wait seconds for sending Ident + POR
+#define disLightOn     30 // [.30] display light on for seconds
+#define CLOSE2END      60 // [ 60] MINUTES until activation is off
+#define CLEANON         6 // [  6] TASK_SECOND dust collector on after current off
+#define repMES          1 // [  1] repeat commands
+#define periRead      100 // [100] read 100ms analog input for 50Hz (current)
+#define currHyst       10 // [ 10] hystereses for current detection
+#define currMean        3 // [  3] current average over ...
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -116,7 +116,7 @@ void flash_led(int);
 // TASKS
 Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms main task
 Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
-Task tU(TASK_SECOND / 2, TASK_FOREVER, &UnLoCallback);  // 500ms
+Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback);  // 1000ms / checkFA ctor
 Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
 
 Task tBU(TASK_SECOND / 10, 6, &BuzzerOn);               // 100ms 6x =600ms added by DieterH on 22.10.2017
@@ -147,7 +147,7 @@ unsigned int pushCount = 0; // counter how long push button in action
 unsigned int CLOSE = CLOSE2END; // RAM cell for before activation is off
 bool firstCLOSE = false;        // only display message once
 // --- for cleaning
-unsigned int CLEAN = CLEANON; // RAM cell for Dust vaccu cleaner on
+unsigned int CLEAN = CLEANON; // RAM cell for Dust vaccu cleaner on after no current
 unsigned int CURLEV = 0;      // RAM cell for before activation is off
 
 // current measurement (cleaning on):
@@ -161,7 +161,7 @@ byte countCM = 0;             // counter for current measurement
 String inStr = "";      // a string to hold incoming data
 String IDENT = "";      // Machine identifier for remote access control
 String SFMes = "";      // String send for repeatMES
-byte plplpl = 0;        // send +++ control AT sequenz
+byte co_ok = 0;        // send +++ control AT sequenz
 byte getTime = porTime;
 
 // ======>  SET UP AREA <=====
@@ -178,15 +178,16 @@ void setup()
   SPI.begin();             // SPI
 
   mfrc522.PCD_Init();      // Init MFRC522
-  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_avg);
+//  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
 
   // IO MODES
-  pinMode(BUSError, OUTPUT);
+  pinMode(xBuError, OUTPUT);
   pinMode(OUT_Machine, OUTPUT);
   pinMode(OUT_Dust, OUTPUT);
 
   // Set default values
-  digitalWrite(BUSError, HIGH); // turn the LED ON (init start)
+  digitalWrite(xBuError, HIGH); // turn the LED ON (init start)
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
 
@@ -212,7 +213,7 @@ void setup()
   // I2C Bus mit slave vorhanden
   if (I2CFound == 1)
   {
-    lcd.begin(20, 4);        // initialize the LCD
+    lcd.begin(20, 4);    // initialize the LCD
     lcd.clear();
     lcd.pinLEDs(buzzerPin, LOW);
     lcd.pinLEDs(BUT_P1_LED, LOW);
@@ -234,17 +235,17 @@ void setup()
 // TASK (Functions) ----------------------------
 void checkXbee()
 {
-  if (IDENT.startsWith("MA") && plplpl == 2)
+  if (IDENT.startsWith("MA") && co_ok == 2)
   {
-    ++plplpl;
+    ++co_ok;
     tB.setCallback(retryPOR);
     tB.enable();
-    digitalWrite(BUSError, LOW); // turn the LED off (Programm start)
+    digitalWrite(xBuError, LOW); // turn the LED off (Programm start)
   }
 }
 
 void retryPOR() {
-  tDF.restartDelayed(TASK_SECOND * 30); // restart display light
+  tDF.restartDelayed(TASK_SECOND * disLightOn); // restart display light
   if (getTime < porTime * 5) {
     Serial.println(String(IDENT) + ";POR;V" + String(Version));
     ++getTime;
@@ -275,7 +276,7 @@ void checkRFID()
       flash_led(4);
       tBD.setCallback(&FlashCallback);
       tBD.restartDelayed(100);
-      tDF.restartDelayed(TASK_SECOND * 30);
+      tDF.restartDelayed(TASK_SECOND * disLightOn);
     }
     Serial.println("card;" + String(code));
     // Display changes
@@ -284,13 +285,7 @@ void checkRFID()
     displayON();
   }
 
-  if (isCleaner && !displayIsON)
-  {
-    tB.setCallback(pushClean);
-    tB.setInterval(TASK_SECOND);
-    tB.enable();   //  time == 0 and timed or Button
-  }
-  else if (displayIsON && steps4push > 0)
+  if (displayIsON && steps4push > 0)
   {
     tB.disable();   //  time == 0 and timed or Button
     digitalWrite(OUT_Dust, LOW);
@@ -298,7 +293,6 @@ void checkRFID()
     steps4push = 0;
     flash_led(1);
   }
-
 }
 
 void UnLoCallback() {   // 500ms Tick
@@ -354,7 +348,7 @@ void repeatMES() {
 
 void BlinkCallback() {
   // --Blink if BUS Error
-  digitalWrite(BUSError, !digitalRead(BUSError));
+  digitalWrite(xBuError, !digitalRead(xBuError));
 }
 
 void FlashCallback() {
@@ -391,14 +385,13 @@ void Current() {   // 500ms Tick
         stepsCM = 2;
       }
       break;
-    case 2:   // generate level over measurements
+    case 2:   // generate level for detecting on
       if (currentVal > CURLEV && countCM < currMean + 1) {
         ++countCM;
       } else if (countCM > currMean)  {
-        CURLEV = currentVal / 2;
+        CURLEV = currentVal / 3 * 2;  // 2 / 3 measured current = level
         stepsCM = 3;
         countCM = 0;
-        isCleaner = true;
       }
       break;
     case 3:   // current > level
@@ -411,13 +404,15 @@ void Current() {   // 500ms Tick
       }
       break;
     case 4:   // wait for level less then level 3 times
-      if (currentVal < CURLEV && countCM < CLEAN +1) {
+      if (currentVal < CURLEV && countCM <= CLEAN * 2) {
         ++countCM;
-      } else if (currentVal > CURLEV && countCM < CLEAN +1) {
+        if (countCM >= CLEAN * 2) {
+          stepsCM = 5;
+          countCM = 0;
+          break;
+        }
+      } else if (currentVal > CURLEV && countCM < CLEAN * 2) {
         countCM =0;
-      } else if (countCM >= CLEAN) {
-        stepsCM = 5;
-        countCM = 0;
       }
       break;
     case 5:   // switch off clean after x sec later
@@ -432,15 +427,32 @@ void Current() {   // 500ms Tick
 // END OF TASKS ---------------------------------
 
 // FUNCTIONS ------------------------------------
+int getNum(String strNum) // Check if realy numbers
+{
+  strNum.trim();
+  for (byte i = 0; i < strNum.length(); i++)
+  {
+    if (!isDigit(strNum[i])) 
+    {
+      Serial.println(String(IDENT) + ";Num?;" + strNum);
+      lcd.setCursor(19,0);
+      lcd.print("?");
+      return 0;
+    }
+  }
+  return strNum.toInt();
+}
+
 void noreg() {
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
-  lcd.setCursor(0, 2); lcd.print("Tag not registered");
+  lcd.setCursor(0, 2); lcd.print("Tag not registered  ");
   lcd.setCursor(0, 3); lcd.print("===> No access! <===");
   tM.enable();
   BadSound();
   but_led(1);
   flash_led(1);
+  tDF.restartDelayed(TASK_SECOND * disLightOn);
 }
 
 void OnTimed(long min) {   // Turn on machine for nnn minutes
@@ -483,7 +495,7 @@ void shutdown(void)
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
   Serial.println(String(IDENT) + ";off");
-  tDF.restartDelayed(TASK_SECOND * 30);
+  tDF.restartDelayed(TASK_SECOND * disLightOn);
   BadSound();
   flash_led(1);
   tM.enable();  // added by DieterH on 18.10.2017
@@ -578,51 +590,6 @@ void displayON()
   intervalRFID = 0;
 }
 
-// cleaner if current and machine off
-void pushClean()
-{
-  uint8_t buttons = lcd.readButtons();
-  switch (steps4push)
-  {
-    case 0:
-      if (buttons & BUTTON_P2)
-      {
-        ++pushCount;
-        if (pushCount % 2 == 0)
-        {
-          but_led(2);
-        }
-        else
-        {
-          but_led(1);
-        }
-        if (pushCount > intervalPush)
-        {
-          digitalWrite(OUT_Dust, HIGH);
-          pushCount = 0;
-          steps4push = 1;
-          but_led(1);
-        }
-      }
-      else
-      {
-        pushCount = 0;
-      }
-      break;
-    case 1:
-      flash_led(3);
-      ++pushCount;
-      if ((buttons & BUTTON_P2 && pushCount > intervalCLMn) || pushCount > intervalCLMx)
-      {
-        digitalWrite(OUT_Dust, LOW);
-        pushCount = 0;
-        steps4push = 0;
-      }
-      flash_led(1);
-      break;
-  }
-}
-
 /*Function: Sample for 100ms and get the maximum value from the SIG pin*/
 int getCurrMax()
 {
@@ -647,103 +614,107 @@ void evalSerialData()
   inStr.toUpperCase();
   if (inStr.startsWith("OK"))
   {
-    if (plplpl == 0)
+    if (co_ok == 0)
     {
-      ++plplpl;
       Serial.println("ATNI");
+      ++co_ok;
     }
     else
     {
-      ++plplpl;
+      ++co_ok;
     }
   }
-
-  if (inStr.startsWith("MA") && inStr.length() == 4)
+  else if (co_ok ==1  && inStr.length() == 4)
   {
+    if (inStr.startsWith(xBeeName))
+    {
+      IDENT = inStr;
+      currNR = inStr.substring(2).toInt();
+    }
+    else
+    {
+      lcd.setCursor(0, 0); lcd.print(inStr);
+    }
     Serial.println("ATCN");
-    IDENT = inStr;
-    currNR = inStr.substring(2).toInt();
+    ++co_ok;
   }
-
-  if (inStr.startsWith("TIME") && stepsCM <=3)
+  else if (inStr.startsWith("TIME") && stepsCM <=3)
   {
     inStr.concat("                   ");     // add blanks to string
     lcd.setCursor(0, 1); lcd.print(inStr.substring(4,24));
     tB.setInterval(TASK_SECOND / 2);
     getTime = 255;
   }
-
-  if (inStr.startsWith("NOREG") && inStr.length() ==5)
+  else if (inStr.startsWith("NOREG") && inStr.length() ==5)
   {
     noreg();  // changed by D. Haude on 18.10.2017
   }
-
-  if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 8) 
+  else if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 7) 
   {
-    val = inStr.substring(3).toInt();
-    OnTimed(val);
+    val = getNum(inStr.substring(3));
+    if (val > CLOSE2END) OnTimed(val);
   }
-
-  if (inStr.startsWith("ONP") && inStr.length() ==3)
+  else if (inStr.startsWith("ONP") && inStr.length() ==3)
   {
     OnPerm();
   }
-
-  if (inStr.startsWith("OFF") && inStr.length() ==3)
+  else if (inStr.startsWith("OFF") && inStr.length() ==3)
   {
-    shutdown(); // Turn OFF Machine   digitalWrite(OUT_Dust, LOW);
+    shutdown(); // Turn OFF Machine, only in case of emergency!
   }
-
-  if (inStr.startsWith("ONDUST") && inStr.length() ==6)
+  else if (inStr.startsWith("ONDUST") && inStr.length() ==6)
   {
     digitalWrite(OUT_Dust, HIGH);  
   }
-
-  if (inStr.startsWith("OFDUST") && inStr.length() ==6)
+  else if (inStr.startsWith("OFDUST") && inStr.length() ==6)
   {
     digitalWrite(OUT_Dust, LOW);  
   }
-
-  if (inStr.startsWith("SETCE"))
+  else if (inStr.startsWith("SETCE") && inStr.length() >= 5 && inStr.length() < 8)
   { // set time before ClosE machine
-    CLOSE = inStr.substring(5).toInt();
+    val = getNum(inStr.substring(5));
+    if (val >= CLOSE2END) CLOSE = val;
   }
-
-  if (inStr.startsWith("SETCN"))
+  else if (inStr.startsWith("SETCN") && inStr.length() >= 5 && inStr.length() < 8)
   { // set time for longer CleaN on
-    CLEAN = inStr.substring(5).toInt();
+    val = getNum(inStr.substring(5));
+    if (val >= CLEANON) CLEAN = val;
   }
-
-  if (inStr.startsWith("SETRT"))
+  else if (inStr.startsWith("SETRT") && inStr.length() >= 5 && inStr.length() < 7)
   { // set repeat messages
-    tR.setIterations(inStr.substring(5).toInt());
+    val = getNum(inStr.substring(5));
+    if (val >= repMES) tR.setIterations(val);
   }
-
-  if (inStr.startsWith("SETCL"))
+  else if (inStr.startsWith("SETCL") && inStr.length() >= 5 && inStr.length() < 8)
   { // set Current Level for switching on and off
-    CURLEV = inStr.substring(5).toInt();
+    val = getNum(inStr.substring(5));
+    if (val > 0) CURLEV = val;
   }
-
-  if (inStr.startsWith("DISON") && !digitalRead(OUT_Machine))
-  { // Switch display on for 60 sec
+  else if (inStr.startsWith("DISON") && !digitalRead(OUT_Machine))
+  { // Switch display on for disLightOn secs
     displayON();
-    tDF.restartDelayed(TASK_SECOND * 60);
+    tDF.restartDelayed(TASK_SECOND * disLightOn);
   }
-
-  if (inStr.substring(0, 3) == "R3T" && inStr.length() >3)
+  else if (inStr.substring(0, 3) == "R3T" && inStr.length() >3)
   {  // print to LCD row 3
-    inStr.concat("                   ");     // add blanks to string
+    inStr.concat("                    ");     // add blanks to string
     lcd.setCursor(0,2);
     lcd.print(inStr.substring(3,23)); // cut string lenght to 20 char
   }
-
-  if (inStr.substring(0, 3) == "R4T" && inStr.length() >3)
+  else if (inStr.substring(0, 3) == "R4T" && inStr.length() >3)
   {  // print to LCD row 4
-    inStr.concat("                   ");     // add blanks to string
+    inStr.concat("                    ");     // add blanks to string
     lcd.setCursor(0,3);
     lcd.print(inStr.substring(3,23));   // cut string lenght to 20 char  changed by MM 10.01.2018
   }
-
+  else
+  {
+    Serial.println(String(IDENT) + ";?;" + inStr);
+    inStr.concat("                    ");    // add blanks to string
+    lcd.setCursor(0,2);
+    lcd.print("?:" + inStr.substring(0,18)); // cut string lenght to 20 char
+  }
+  inStr = "";
 }
 
 /* SerialEvent occurs whenever a new data comes in the
