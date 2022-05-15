@@ -85,7 +85,7 @@ byte I2CTransmissionResult = 0;
 // DEFINES
 #define porTime         5 // [  5] wait seconds for sending Ident + POR
 #define disLightOn     30 // [.30] display light on for seconds
-#define CLOSE2END      60 // [ 60] MINUTES until activation is off
+#define CLOSE2END      15 // [ 15] MINUTES until activation is switched off
 #define CLEANON         6 // [  6] TASK_SECOND dust collector on after current off
 #define repMES          1 // [  1] repeat commands
 #define periRead      100 // [100] read 100ms analog input for 50Hz (current)
