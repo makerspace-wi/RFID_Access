@@ -33,11 +33,11 @@
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 26.04.2022 by Michael Muehl
-  changed: new commands for dust collector, loged in | out, machine on | off,
-           combine all commands and check messages, if kown and number is ok.
+  last change: 16.05.2022 by Michael Muehl
+  changed: Set back CLOSE2END to 15, check if ONT(nnn) > 5 [0 not possible]
+
 */
-#define Version "9.7.2" // (Test = 9.7.x ==> 9.7.3)
+#define Version "9.7.3" // (Test = 9.7.x ==> 9.7.4)
 #define xBeeName "MA"   // Name and number for xBee
 #define checkFA      2  // event check for every (1 second / FActor)
 
@@ -85,7 +85,7 @@ byte I2CTransmissionResult = 0;
 // DEFINES
 #define porTime         5 // [  5] wait seconds for sending Ident + POR
 #define disLightOn     30 // [.30] display light on for seconds
-#define CLOSE2END      15 // [ 15] MINUTES until activation is switched off
+#define CLOSE2END      15 // [ 15] MINUTES blinking before activation is switched off
 #define CLEANON         6 // [  6] TASK_SECOND dust collector on after current off
 #define repMES          1 // [  1] repeat commands
 #define periRead      100 // [100] read 100ms analog input for 50Hz (current)
@@ -161,7 +161,7 @@ byte countCM = 0;             // counter for current measurement
 String inStr = "";      // a string to hold incoming data
 String IDENT = "";      // Machine identifier for remote access control
 String SFMes = "";      // String send for repeatMES
-byte co_ok = 0;        // send +++ control AT sequenz
+byte co_ok = 0;         // send +++ control AT sequenz OK
 byte getTime = porTime;
 
 // ======>  SET UP AREA <=====
@@ -636,7 +636,6 @@ void evalSerialData()
       lcd.setCursor(0, 0); lcd.print(inStr);
     }
     Serial.println("ATCN");
-    ++co_ok;
   }
   else if (inStr.startsWith("TIME") && stepsCM <=3)
   {
@@ -652,7 +651,7 @@ void evalSerialData()
   else if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 7) 
   {
     val = getNum(inStr.substring(3));
-    if (val > CLOSE2END) OnTimed(val);
+    if (val > 5) OnTimed(val);
   }
   else if (inStr.startsWith("ONP") && inStr.length() ==3)
   {
