@@ -7,39 +7,43 @@
 
   Commands to Raspi --->
   xBeeName - from xBee (=Ident) [max 4 caracter including numbers] {xBeeName + nn}
-  'POR'    - machine power on reset (Ident;por)
-
-  'Ident;on'   - machine reporting ON-Status
-  'Ident;off'  - machine reporting OFF-Status
-  'card;nn...' - uid_2 from reader
+  'Ident;POR;Vx.x.x' - machine power on reset and sw version (Ident;por;Vx.x.x)
+  'card;nn...'       - uid_2 from reader
+  'Ident;on'         - Ident is startet and time is on
+  'Ident;off'        - Ident reporting nobody logged in
   If current detection then:
   'cd_'    - current detected
   'nc_'    - no current
+  'cule'   - current level for detection
+  'flra'   - flowrate measured
 
-  Commands from Raspi
+  Commands from Raspi (Commands send from raspi, are allways inspected and if known, executed!!!)
   'time'   - format time33.33.3333 33:33:33
-  'onp'    - Machine permanent ON
-  'ontxx'  - Machine xxx minutes ON
-  'off'    - Machine OFF
   'noreg'  - RFID-Chip not registed
+  'ontxx'  - Machine xxx minutes ON
+  'onp'    - Machine permanent ON
+  'off'    - Machine OFF
   'onDust' - Dust Collector on  (New)
   'ofDust' - Dust Collector off (New)
 
   'setce'  - [15 min] set time before ClosE machine
   'setcn'  - [6 sec] set time for longer CleaN on
-  'setcl'  - [0] set Current Level for switching on and off
+  'setcl'  - [0] set Current Level for switching on and off [CURLEV = 1. current value / 3 * 2]
+  'setfc'  - [0] set flowcontrol active = true
+  'setfm'  - [3.0] set flow minimum for motor start ok
   'setrt'  - [1] set RepeaT messages
   'dison'  - display on for 60 sec
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 16.05.2022 by Michael Muehl
-  changed: Set back CLOSE2END to 15, check if ONT(nnn) > 5 [0 not possible]
+  last change: 08.11.2022 by Michael Muehl
+  changed: New version current measurement or flow mesurement are possible
 
 */
-#define Version "9.7.3" // (Test = 9.7.x ==> 9.7.4)
-#define xBeeName "MA"   // Name and number for xBee
-#define checkFA      2  // event check for every (1 second / FActor)
+#define Version "9.8.0"  // (Test = 9.8.x ==> 9.8.0)
+#define xBeeName   "MA"  // Name and number for xBee
+#define checkFA      2   // event check for every (1 second / FActor)
+#define flowSend    30   // send flowrate after flowsend sec
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -51,46 +55,49 @@
 
 // PIN Assignments
 // RFID Control -------
-#define RST_PIN      4  // RFID Reset
-#define SS_PIN      10  // RFID Select
+#define RST_PIN      4   // RFID Reset
+#define SS_PIN      10   // RFID Select
 
 // Machine Control (ext)
-#define currMotor   A0  // Motor current (Machine)
-#define OUT_Machine A2  // OUT Machine on / off  (Machine)
-#define OUT_Dust    A3  // OUT Dust on / off  (Dust Collector)
+#define FLOWMETER    2   // input Flow Meter [INT0]
+#define currMotor   A0   // Motor current (Machine)
 
-#define xBuError     8  // xBee and Bus error (13)
+#define OUT_Machine A2   // OUT Machine on / off  (Machine)
+#define OUT_Dust    A3   // OUT Dust on / off  (Dust Collector)
+
+#define xBuError     8   // xBee and Bus error (13)
 
 // I2C IOPort definition
 byte I2CFound = 0;
 byte I2CTransmissionResult = 0;
-#define I2CPort   0x20  // I2C Adress MCP23017
+#define I2CPort   0x20   // I2C Adress MCP23017
 
 // Pin Assignments Display (I2C LCD Port A/LED +Button Port B)
 // Switched to LOW
-#define FlashLED_A   0  // Flash LEDs oben
-#define FlashLED_B   1  // Flash LEDs unten
-#define buzzerPin    2  // Buzzer Pin
-#define BUT_P1_LED   3  // not used
+#define FlashLED_A   0   // Flash LEDs oben
+#define FlashLED_B   1   // Flash LEDs unten
+#define buzzerPin    2   // Buzzer Pin
+#define BUT_P1_LED   3   // not used
 // Switched High - Low - High - Low
-#define StopLEDrt    4  // StopLEDrt (LED + Stop-Taster)
-#define StopLEDgn    5  // StopLEDgn (LED - Stop-Taster)
+#define StopLEDrt    4   // StopLEDrt (LED + Stop-Taster)
+#define StopLEDgn    5   // StopLEDgn (LED - Stop-Taster)
 // switch to HIGH Value (def .h)
-// BUTTON_P1         6  // not used
-// BUTTON_P2         7  // StopSwitch
+// BUTTON_P1         6   // not used
+// BUTTON_P2         7   // StopSwitch
 // BACKLIGHT for LCD-Display
 #define BACKLIGHToff 0x0
 #define BACKLIGHTon  0x1
 
 // DEFINES
-#define porTime         5 // [  5] wait seconds for sending Ident + POR
-#define disLightOn     30 // [.30] display light on for seconds
-#define CLOSE2END      15 // [ 15] MINUTES blinking before activation is switched off
-#define CLEANON         6 // [  6] TASK_SECOND dust collector on after current off
-#define repMES          1 // [  1] repeat commands
-#define periRead      100 // [100] read 100ms analog input for 50Hz (current)
-#define currHyst       10 // [ 10] hystereses for current detection
-#define currMean        3 // [  3] current average over ...
+#define porTime        5 // [  5] wait seconds for sending Ident + POR
+#define disLightOn    30 // [.30] display light on for seconds
+#define CLOSE2END     15 // [ 15] MINUTES blinking before activation is switched off
+#define CLEANON        6 // [  6] TASK_SECOND dust collector on after current off
+#define repMES         1 // [  1] repeat commands
+#define periRead     100 // [100] ms read analog input for 50Hz (current)
+#define currHyst      25 // [ 10] hystereses for current detection
+#define currMean       3 // [  3] current average over ...
+#define flowMin      3.0 // [3.0] minimum flow for motor start
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -109,6 +116,8 @@ void DispOFF();          // Task to switch display off after time
 
 void Current();          // current measurement and detection
 
+void FlowCallback();     // Task to calculate Flow Rate - added by D. Haude 08.03.2017
+
 // Functions define for C++
 void OnTimed(long);
 void flash_led(int);
@@ -125,6 +134,8 @@ Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
 
 // --- Current measurement --
 Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
+// --- or Flow measurement --
+Task tFL(TASK_SECOND, TASK_FOREVER, &FlowCallback);     // flow measure
 
 // VARIABLES
 unsigned long val;
@@ -148,7 +159,7 @@ unsigned int CLOSE = CLOSE2END; // RAM cell for before activation is off
 bool firstCLOSE = false;        // only display message once
 // --- for cleaning
 unsigned int CLEAN = CLEANON; // RAM cell for Dust vaccu cleaner on after no current
-unsigned int CURLEV = 0;      // RAM cell for before activation is off
+unsigned int CURLEV = 0;      // RAM cell for detecting ON = > and OFF = > (CURLEV = 1. current value / 3 * 2)
 
 // current measurement (cleaning on):
 unsigned int currentVal =0;   // mean value
@@ -156,6 +167,15 @@ unsigned int currentMax =0;   // read max value
 int currNR  = 0;              // number off machine with current detection
 byte stepsCM = 0;             // steps for current measurement
 byte countCM = 0;             // counter for current measurement
+
+// Flow Sensor ---------------sensorInterrupt = 0;    // 0 = digital pin 2
+boolean flowControl = false;  // flowcontrol for water cooling motors
+float flowRate;               // represents Liter/minute
+int flowcnt = 0;              // Flowmeter Counter
+int flSeCnt = 0;              // Counter fopr sending flowrate
+float FLOWLEV = flowMin;      // Value for motor start
+// The hall-effect flow sensor outputs approximately 4.5 pulses per second per litre/minute of flow.
+const float calibrationFactor = 4.5;
 
 // Serial with xBee
 String inStr = "";      // a string to hold incoming data
@@ -186,22 +206,27 @@ void setup()
   pinMode(OUT_Machine, OUTPUT);
   pinMode(OUT_Dust, OUTPUT);
 
+  pinMode(FLOWMETER, INPUT_PULLUP);
+
   // Set default values
   digitalWrite(xBuError, HIGH); // turn the LED ON (init start)
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
 
-    runner.init();
-    runner.addTask(tM);
-    runner.addTask(tB);
-    runner.addTask(tR);
-    runner.addTask(tU);
-    runner.addTask(tBU);
-    runner.addTask(tBD);
-    runner.addTask(tDF);
+  runner.init();
+  runner.addTask(tM);
+  runner.addTask(tB);
+  runner.addTask(tR);
+  runner.addTask(tU);
+  runner.addTask(tBU);
+  runner.addTask(tBD);
+  runner.addTask(tDF);
 
-    // Current --------
-    runner.addTask(tCU);
+  // Current --------
+  runner.addTask(tCU);
+  runner.addTask(tFL);
+
+  attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
 
   // Check if I2C _ Ports are avilable
   Wire.beginTransmission(I2CPort);
@@ -221,10 +246,9 @@ void setup()
     flash_led(1);
     dispRFID();
     tM.enable();         // xBee check
-    tCU.enable();        // Current
     Serial.print("+++"); //Starting the request of IDENT
   }
-  else 
+  else
   {
     tB.enable();  // enable Task Error blinking
     tB.setInterval(TASK_SECOND);
@@ -235,7 +259,7 @@ void setup()
 // TASK (Functions) ----------------------------
 void checkXbee()
 {
-  if (IDENT.startsWith("MA") && co_ok == 2)
+  if (IDENT.startsWith(xBeeName) && co_ok == 2)
   {
     ++co_ok;
     tB.setCallback(retryPOR);
@@ -253,7 +277,8 @@ void retryPOR() {
     lcd.setCursor(0, 0); lcd.print(String(IDENT) + " ");
     lcd.setCursor(16, 1); lcd.print((getTime - porTime) * porTime);
   }
-  else if (getTime == 255) {
+  else if (getTime == 255)
+  {
     tR.setIterations(repMES);
     tM.setCallback(checkRFID);
     tM.enable();
@@ -263,7 +288,7 @@ void retryPOR() {
 }
 
 void checkRFID()
-{   // 500ms Tick
+{ // 500ms Tick
   if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
   {
     code = 0;
@@ -346,7 +371,8 @@ void repeatMES() {
   Serial.println(String(SFMes));
 }
 
-void BlinkCallback() {
+void BlinkCallback()
+{
   // --Blink if BUS Error
   digitalWrite(xBuError, !digitalRead(xBuError));
 }
@@ -364,20 +390,24 @@ void DispOFF() {
 }
 
 // Current measure -----
-void Current() {   // 500ms Tick
+void Current()
+{ // 500ms Tick
   // detect current for switching
   currentMax = getCurrMax();
   // steps ------------------
-  switch (stepsCM) {
+  switch (stepsCM)
+  {
     case 0:   // set level values to min
-      CURLEV = currentVal + currHyst;
-      if (digitalRead(OUT_Machine)) {
+      CURLEV = currentMax + currHyst;
+      if (digitalRead(OUT_Machine))
+      {
         stepsCM = 1;
         countCM = 0;
       }
       break;
     case 1:   // current > level
-      if (currentVal > CURLEV) {
+      if (currentVal > CURLEV)
+      {
         SFMes = "CD"+ String(currNR);
         Serial.println(SFMes);
         tR.restart();
@@ -386,16 +416,21 @@ void Current() {   // 500ms Tick
       }
       break;
     case 2:   // generate level for detecting on
-      if (currentVal > CURLEV && countCM < currMean + 1) {
+      if (currentVal > CURLEV && countCM < currMean + 1)
+      {
         ++countCM;
-      } else if (countCM > currMean)  {
+      }
+      else if (countCM > currMean)
+      {
         CURLEV = currentVal / 3 * 2;  // 2 / 3 measured current = level
         stepsCM = 3;
         countCM = 0;
+        Serial.println(String(IDENT) + ";cule;" + String(CURLEV));
       }
       break;
     case 3:   // current > level
-      if (currentVal > CURLEV) {
+      if (currentVal > CURLEV)
+      {
         SFMes = "CD"+ String(currNR);
         Serial.println(SFMes);
         tR.restart();
@@ -404,14 +439,17 @@ void Current() {   // 500ms Tick
       }
       break;
     case 4:   // wait for level less then level 3 times
-      if (currentVal < CURLEV && countCM <= CLEAN * 2) {
+      if (currentVal < CURLEV && countCM <= CLEAN * 2)
+      {
         ++countCM;
         if (countCM >= CLEAN * 2) {
           stepsCM = 5;
           countCM = 0;
           break;
         }
-      } else if (currentVal > CURLEV && countCM < CLEAN * 2) {
+      }
+      else if (currentVal > CURLEV && countCM < CLEAN * 2)
+      {
         countCM =0;
       }
       break;
@@ -423,6 +461,21 @@ void Current() {   // 500ms Tick
       break;
   }
   currentVal = (currentVal + currentMax) / 2;
+}
+
+void FlowCallback()
+{
+  flowRate = flowcnt / calibrationFactor; // result in l/min
+  flowcnt = 0;
+  if (flSeCnt <= 0)
+  {
+    String flt = "  " + String(flowRate, 2);
+    byte l = flt.length();
+    Serial.println(String(IDENT) + ";flra;" + String(flowRate, 2));
+    flSeCnt = flowSend;
+    lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(flt.substring(l - 5));
+  }
+  flSeCnt--;
 }
 // END OF TASKS ---------------------------------
 
@@ -478,11 +531,35 @@ void granted()
   tM.disable();
   tDF.disable();
   tU.enable();
+  if (flowControl)
+  {
+    flSeCnt = 0;
+  }
+  else
+  {
+    tCU.enable();        // Current
+    currentVal =0;
+  }
+  if ((!flowControl) || (flowControl && (flowRate > FLOWLEV)))
+  {
+    digitalWrite(OUT_Machine, HIGH);
+    if (flowControl)
+    {
+      lcd.setCursor(0, 2); lcd.print("Access by ");
+    }
+    else
+    {
+      lcd.setCursor(0, 2); lcd.print("Access granted      ");
+    }
+  }
+  else
+  {
+    digitalWrite(OUT_Machine, LOW);
+    lcd.setCursor(0, 2); lcd.print("Access?  FLOW?:"); lcd.print(String(flowRate,2));
+  }
   but_led(3);
   flash_led(1);
   GoodSound();
-  digitalWrite(OUT_Machine, HIGH);
-  lcd.setCursor(0, 2); lcd.print("Access granted      ");
   tR.disable();
 }
 
@@ -498,26 +575,35 @@ void shutdown(void)
   tDF.restartDelayed(TASK_SECOND * disLightOn);
   BadSound();
   flash_led(1);
-  tM.enable();  // added by DieterH on 18.10.2017
-  stepsCM = 0;
+  tM.enable();    // added by DieterH on 18.10.2017
+  if (!flowControl)
+  {
+    tCU.disable();        // Current
+    stepsCM = 1;
+  }
   // Display change
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("System shut down at");
+}
+
+void pulseCounter()
+{
+  flowcnt++;
 }
 
 void but_led(int var)
 {
   switch (var)
   {
-    case 1:   // LEDs off
+    case 1: // LED rt & gn off
       lcd.pinLEDs(StopLEDrt, HIGH);
       lcd.pinLEDs(StopLEDgn, HIGH);
       break;
-    case 2:   // RED LED on
+    case 2: // RED LED on
       lcd.pinLEDs(StopLEDrt, LOW);
       lcd.pinLEDs(StopLEDgn, HIGH);
       break;
-    case 3:   // GREEN LED on
+    case 3: // GREEN LED on
       lcd.pinLEDs(StopLEDrt, HIGH);
       lcd.pinLEDs(StopLEDgn, LOW);
       break;
@@ -593,8 +679,8 @@ void displayON()
 /*Function: Sample for 100ms and get the maximum value from the SIG pin*/
 int getCurrMax()
 {
-  int curMax = 0;
   int curValue;   //value read from the sensor
+  int curMax = 0;
   uint32_t start_time = millis();
   while((millis()-start_time) < periRead)
   {
@@ -685,16 +771,36 @@ void evalSerialData()
     if (val >= repMES) tR.setIterations(val);
   }
   else if (inStr.startsWith("SETCL") && inStr.length() >= 5 && inStr.length() < 8)
-  { // set Current Level for switching on and off
+  { // set Current Level for switching relais on and off
     val = getNum(inStr.substring(5));
     if (val > 0) CURLEV = val;
+  }
+  else if (inStr.startsWith("SETFC") && inStr.length() == 6)
+  { // active flow control = true
+    if (inStr.substring(5) == "1")
+    {
+      flowControl = true;
+      flSeCnt = 3;
+      tFL.enable(); // flow measurement on
+    }
+    else
+    {
+      flowControl = false;
+      tFL.disable(); // flow measurement on
+      stepsCM = 0;
+    }
+  }
+  else if (inStr.startsWith("SETFM") && inStr.length() >= 5 && inStr.length() < 8)
+  { // set flow Level for flow is ok
+    val = getNum(inStr.substring(5));
+    if (val > 0) FLOWLEV = (float)val;
   }
   else if (inStr.startsWith("DISON") && !digitalRead(OUT_Machine))
   { // Switch display on for disLightOn secs
     displayON();
     tDF.restartDelayed(TASK_SECOND * disLightOn);
   }
-  else if (inStr.substring(0, 3) == "R3T" && inStr.length() >3)
+  else if (inStr.substring(0, 3) == "R3T" && inStr.length() > 3)
   {  // print to LCD row 3
     inStr.concat("                    ");     // add blanks to string
     lcd.setCursor(0,2);
@@ -722,7 +828,7 @@ void evalSerialData()
   response.  Multiple bytes of data may be available.
 */
 void serialEvent()
- {
+{
   char inChar = (char)Serial.read();
   if (inChar == '\x0d')
   {
