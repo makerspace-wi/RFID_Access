@@ -199,7 +199,7 @@ void setup()
 
   mfrc522.PCD_Init();      // Init MFRC522
   mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_avg);
-//  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  // mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
 
   // IO MODES
   pinMode(xBuError, OUTPUT);
@@ -488,7 +488,7 @@ int getNum(String strNum) // Check if realy numbers
   {
     if (!isDigit(strNum[i])) 
     {
-      Serial.println(String(IDENT) + ";Num?;" + strNum);
+      Serial.println(String(IDENT) + ";" + inStr + ";Num?;" + strNum);
       lcd.setCursor(19,0);
       lcd.print("?");
       return 0;
@@ -778,6 +778,7 @@ void evalSerialData()
   }
   else if (inStr.startsWith("SETFC") && inStr.length() == 6)
   { // active flow control = true
+    val = getNum(inStr.substring(5));
     if (inStr.substring(5) == "1")
     {
       flowControl = true;
