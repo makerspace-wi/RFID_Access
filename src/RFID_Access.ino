@@ -43,7 +43,7 @@
 #define Version "9.8.0"  // (Test = 9.8.x ==> 9.8.0)
 #define xBeeName   "MA"  // Name and number for xBee
 #define checkFA      2   // event check for every (1 second / FActor)
-#define flowSend    30   // send flowrate after flowsend sec
+#define flowSend     3   // [3] x 10 sec send flowrate 
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -97,7 +97,7 @@ byte I2CTransmissionResult = 0;
 #define periRead     100 // [100] ms read analog input for 50Hz (current)
 #define currHyst      25 // [ 10] hystereses for current detection
 #define currMean       3 // [  3] current average over ...
-#define flowMin      3.0 // [3.0] minimum flow for motor start
+#define flowMin      150 // [150] minimum flow for motor start in milliLiter/min
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -135,7 +135,7 @@ Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
 // --- Current measurement --
 Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
 // --- or Flow measurement --
-Task tFL(TASK_SECOND, TASK_FOREVER, &FlowCallback);     // flow measure
+Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback); // flow measure for 10sec
 
 // VARIABLES
 unsigned long val;
@@ -170,12 +170,12 @@ byte countCM = 0;             // counter for current measurement
 
 // Flow Sensor ---------------sensorInterrupt = 0;    // 0 = digital pin 2
 boolean flowControl = false;  // flowcontrol for water cooling motors
-float flowRate;               // represents Liter/minute
-int flowcnt = 0;              // Flowmeter Counter
-int flSeCnt = 0;              // Counter fopr sending flowrate
-float FLOWLEV = flowMin;      // Value for motor start
-// The hall-effect flow sensor outputs approximately 4.5 pulses per second per litre/minute of flow.
-const float calibrationFactor = 4.5;
+int flSeCnt = 0;              // Counter for sending flowrate
+unsigned int flowRate = 0;    // represents milliLiter/minute
+unsigned int flowcnt = 0;     // Flowmeter Counter
+unsigned int flowLev = flowMin;  // Value for motor start in milliLiter/minute
+// The hall-effect flow sensor outputs approximately 45 pulses per 10 second per litre/minute of flow.
+const int calibrationFactor = 45;   // = liter / minute
 
 // Serial with xBee
 String inStr = "";      // a string to hold incoming data
@@ -465,16 +465,17 @@ void Current()
 
 void FlowCallback()
 {
-  flowRate = flowcnt / calibrationFactor; // result in l/min
-  flowcnt = 0;
+  flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
+  // Serial.println("FLOW;" + String(flowRate) + ";" + String(flowcnt) + ";" + String(calibrationFactor));
   if (flSeCnt <= 0)
   {
-    String flt = "  " + String(flowRate, 2);
-    byte l = flt.length();
-    Serial.println(String(IDENT) + ";flra;" + String(flowRate, 2));
+    Serial.println(String(IDENT) + ";flra;" + String(flowRate));
     flSeCnt = flowSend;
-    lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(flt.substring(l - 5));
+    char tbs[8];
+    sprintf(tbs, "% 5d", flowRate);
+    lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
   }
+  flowcnt = 0;
   flSeCnt--;
 }
 // END OF TASKS ---------------------------------
@@ -540,7 +541,7 @@ void granted()
     tCU.enable();        // Current
     currentVal =0;
   }
-  if ((!flowControl) || (flowControl && (flowRate > FLOWLEV)))
+  if ((!flowControl) || (flowControl && (flowRate > flowLev)))
   {
     digitalWrite(OUT_Machine, HIGH);
     if (flowControl)
@@ -555,7 +556,7 @@ void granted()
   else
   {
     digitalWrite(OUT_Machine, LOW);
-    lcd.setCursor(0, 2); lcd.print("Access?  FLOW?:"); lcd.print(String(flowRate,2));
+    lcd.setCursor(0, 2); lcd.print("Access?? ");
   }
   but_led(3);
   flash_led(1);
@@ -780,7 +781,7 @@ void evalSerialData()
     if (inStr.substring(5) == "1")
     {
       flowControl = true;
-      flSeCnt = 3;
+      flSeCnt = 0;
       tFL.enable(); // flow measurement on
     }
     else
@@ -793,7 +794,7 @@ void evalSerialData()
   else if (inStr.startsWith("SETFM") && inStr.length() >= 5 && inStr.length() < 8)
   { // set flow Level for flow is ok
     val = getNum(inStr.substring(5));
-    if (val > 0) FLOWLEV = (float)val;
+    if (val > 0) flowLev = (float)val;
   }
   else if (inStr.startsWith("DISON") && !digitalRead(OUT_Machine))
   { // Switch display on for disLightOn secs
