@@ -11,11 +11,13 @@
   'card;nn...'       - uid_2 from reader
   'Ident;on'         - Ident is startet and time is on
   'Ident;off'        - Ident reporting nobody logged in
+  'Ident;?;'         - Ident reporting unknown command
+  'Ident;Num?;'      - Ident reporting unkown number
   If current detection then:
   'cd_'    - current detected
   'nc_'    - no current
-  'cule'   - current level for detection
-  'flra'   - flowrate measured
+  'cule___'- current level for detection without unit [A]
+  'flra___'- flowrate measured with unit [ml/min]
 
   Commands from Raspi (Commands send from raspi, are allways inspected and if known, executed!!!)
   'time'   - format time33.33.3333 33:33:33
@@ -23,24 +25,24 @@
   'ontxx'  - Machine xxx minutes ON
   'onp'    - Machine permanent ON
   'off'    - Machine OFF
-  'onDust' - Dust Collector on  (New)
-  'ofDust' - Dust Collector off (New)
+  'onDust' - Dust Collector on
+  'ofDust' - Dust Collector off
 
   'setce'  - [15 min] set time before ClosE machine
   'setcn'  - [6 sec] set time for longer CleaN on
-  'setcl'  - [0] set Current Level for switching on and off [CURLEV = 1. current value / 3 * 2]
-  'setfc'  - [0] set flowcontrol active = true
-  'setfm'  - [3.0] set flow minimum for motor start ok
+  'setcl'  - [0] set Current Level for switching on and off [CURLEV = current value / 3 * 2]
+  'setfc'  - [0] set flowcontrol active = 1
+  'setfm'  - [150] (ml/min) set flow minimum for maschine on
   'setrt'  - [1] set RepeaT messages
-  'dison'  - display on for 60 sec
+  'dison'  - display on for 30 secs
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 08.11.2022 by Michael Muehl
-  changed: New version current measurement or flow mesurement are possible
+  last change: 10.11.2022 by Michael Muehl
+  changed: New version current measurement or flow mesurement are possible in ml/min
 
 */
-#define Version "9.8.0"  // (Test = 9.8.x ==> 9.8.0)
+#define Version "9.8.1"  // (Test = 9.8.x ==> 9.8.2)
 #define xBeeName   "MA"  // Name and number for xBee
 #define checkFA      2   // event check for every (1 second / FActor)
 #define flowSend     3   // [3] x 10 sec send flowrate 
@@ -488,7 +490,7 @@ int getNum(String strNum) // Check if realy numbers
   {
     if (!isDigit(strNum[i])) 
     {
-      Serial.println(String(IDENT) + ";" + inStr + ";Num?;" + strNum);
+      Serial.println(String(IDENT) + ";?;" + inStr + ";Num?;" + strNum);
       lcd.setCursor(19,0);
       lcd.print("?");
       return 0;
