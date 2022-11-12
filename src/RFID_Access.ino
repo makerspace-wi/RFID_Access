@@ -468,14 +468,13 @@ void Current()
 void FlowCallback()
 {
   flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
-  // Serial.println("FLOW;" + String(flowRate) + ";" + String(flowcnt) + ";" + String(calibrationFactor));
   if (flSeCnt <= 0)
   {
     Serial.println(String(IDENT) + ";flra;" + String(flowRate));
-    flSeCnt = flowSend;
     char tbs[8];
     sprintf(tbs, "% 5d", flowRate);
     lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
+    flSeCnt = flowSend;
   }
   flowcnt = 0;
   flSeCnt--;
@@ -579,7 +578,11 @@ void shutdown(void)
   BadSound();
   flash_led(1);
   tM.enable();    // added by DieterH on 18.10.2017
-  if (!flowControl)
+  if (flowControl)
+  {
+    flSeCnt = 0;
+  }
+  else
   {
     tCU.disable();        // Current
     stepsCM = 1;
