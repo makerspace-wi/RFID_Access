@@ -467,7 +467,7 @@ void Current()
 
 void FlowCallback()
 {
-  //detachInterrupt(interrupt);
+  //detachInterrupt(FLOWMETER);
   flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
   if (flSeCnt <= 0)
   {
