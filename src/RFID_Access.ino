@@ -467,6 +467,7 @@ void Current()
 
 void FlowCallback()
 {
+  //detachInterrupt(interrupt);
   flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
   if (flSeCnt <= 0)
   {
@@ -478,6 +479,7 @@ void FlowCallback()
   }
   flowcnt = 0;
   flSeCnt--;
+  //attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
 }
 // END OF TASKS ---------------------------------
 
