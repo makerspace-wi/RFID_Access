@@ -61,7 +61,6 @@
 #define SS_PIN      10   // RFID Select
 
 // Machine Control (ext)
-#define sensorInterrupt 0 // 0 = digital pin 2
 #define FLOWMETER    2   // input Flow Meter [INT0]
 #define currMotor   A0   // Motor current (Machine)
 
