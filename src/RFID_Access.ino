@@ -61,6 +61,7 @@
 #define SS_PIN      10   // RFID Select
 
 // Machine Control (ext)
+#define sensorInterrupt 0 // 0 = digital pin 2
 #define FLOWMETER    2   // input Flow Meter [INT0]
 #define currMotor   A0   // Motor current (Machine)
 
@@ -208,12 +209,13 @@ void setup()
   pinMode(OUT_Machine, OUTPUT);
   pinMode(OUT_Dust, OUTPUT);
 
-  pinMode(FLOWMETER, INPUT_PULLUP);
-
+  pinMode(FLOWMETER, INPUT);
+  digitalWrite(FLOWMETER, HIGH);
   // Set default values
   digitalWrite(xBuError, HIGH); // turn the LED ON (init start)
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
+  
 
   runner.init();
   runner.addTask(tM);
@@ -467,7 +469,7 @@ void Current()
 
 void FlowCallback()
 {
-  //detachInterrupt(FLOWMETER);
+  detachInterrupt(digitalPinToInterrupt(FLOWMETER));
   flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
   if (flSeCnt <= 0)
   {
@@ -479,7 +481,7 @@ void FlowCallback()
   }
   flowcnt = 0;
   flSeCnt--;
-  //attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
+  attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
 }
 // END OF TASKS ---------------------------------
 
