@@ -208,7 +208,7 @@ void setup()
   pinMode(OUT_Machine, OUTPUT);
   pinMode(OUT_Dust, OUTPUT);
 
-  pinMode(FLOWMETER, INPUT);
+  pinMode(FLOWMETER, INPUT);  // pull up resistor build in sensor!
   digitalWrite(FLOWMETER, HIGH);
   // Set default values
   digitalWrite(xBuError, HIGH); // turn the LED ON (init start)
