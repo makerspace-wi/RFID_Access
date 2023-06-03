@@ -125,19 +125,19 @@ void OnTimed(long);
 void flash_led(int);
 
 // TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms main task
-Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
-Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback);  // 1000ms / checkFA ctor
-Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &runner, true);	    // 500ms main task
+Task tR(TASK_SECOND / 2, 0, &repeatMES, &runner, true);                // 500ms * repMES repeat messages
+Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback, &runner, true);  // 1000ms / checkFA ctor
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback, &runner, true); // 5000ms added M. Muehl
 
-Task tBU(TASK_SECOND / 10, 6, &BuzzerOn);               // 100ms 6x =600ms added by DieterH on 22.10.2017
-Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
-Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
+Task tBU(TASK_SECOND / 10, 6, &BuzzerOn, &runner, true);               // 100ms 6x =600ms added by DieterH on 22.10.2017
+Task tBD(1, TASK_ONCE, &FlashCallback, &runner, true);                 // Flash Delay
+Task tDF(1, TASK_ONCE, &DispOFF, &runner, true);                       // display off
 
 // --- Current measurement --
-Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
+Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current, &runner, true);      // current measure
 // --- or Flow measurement --
-Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback); // flow measure for 10sec
+Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback, &runner, true); // flow measure for 10sec
 
 // VARIABLES
 unsigned long val;
@@ -215,21 +215,9 @@ void setup()
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
   
-
-  runner.init();
-  runner.addTask(tM);
-  runner.addTask(tB);
-  runner.addTask(tR);
-  runner.addTask(tU);
-  runner.addTask(tBU);
-  runner.addTask(tBD);
-  runner.addTask(tDF);
-
-  // Current --------
-  runner.addTask(tCU);
-  runner.addTask(tFL);
-
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
+  
+  runner.startNow();
 
   // Check if I2C _ Ports are avilable
   Wire.beginTransmission(I2CPort);
