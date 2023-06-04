@@ -42,10 +42,11 @@
   changed: New version current measurement or flow mesurement are possible in ml/min
 
 */
-#define Version "9.8.1"  // (Test = 9.8.x ==> 9.8.2)
+#define Version "9.8.2"  // (Test = 9.8.x ==> 9.8.2)
 #define xBeeName   "MA"  // Name and number for xBee
 #define checkFA      2   // event check for every (1 second / FActor)
 #define flowSend     3   // [3] x 10 sec send flowrate 
+#define flowMin      500 // [500] minimum flow for motor start in milliLiter/min
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -99,7 +100,6 @@ byte I2CTransmissionResult = 0;
 #define periRead     100 // [100] ms read analog input for 50Hz (current)
 #define currHyst      25 // [ 10] hystereses for current detection
 #define currMean       3 // [  3] current average over ...
-#define flowMin      150 // [150] minimum flow for motor start in milliLiter/min
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -125,19 +125,19 @@ void OnTimed(long);
 void flash_led(int);
 
 // TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &runner, true);	    // 500ms main task
-Task tR(TASK_SECOND / 2, 0, &repeatMES, &runner, true);                // 500ms * repMES repeat messages
-Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback, &runner, true);  // 1000ms / checkFA ctor
-Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback, &runner, true); // 5000ms added M. Muehl
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms main task
+Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
+Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback);  // 1000ms / checkFA ctor
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
 
-Task tBU(TASK_SECOND / 10, 6, &BuzzerOn, &runner, true);               // 100ms 6x =600ms added by DieterH on 22.10.2017
-Task tBD(1, TASK_ONCE, &FlashCallback, &runner, true);                 // Flash Delay
-Task tDF(1, TASK_ONCE, &DispOFF, &runner, true);                       // display off
+Task tBU(TASK_SECOND / 10, 6, &BuzzerOn);               // 100ms 6x =600ms added by DieterH on 22.10.2017
+Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
+Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
 
 // --- Current measurement --
-Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current, &runner, true);      // current measure
+Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
 // --- or Flow measurement --
-Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback, &runner, true); // flow measure for 10sec
+Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback); // flow measure for 10sec
 
 // VARIABLES
 unsigned long val;
@@ -173,11 +173,12 @@ byte countCM = 0;             // counter for current measurement
 // Flow Sensor ---------------sensorInterrupt = 0;    // 0 = digital pin 2
 boolean flowControl = false;  // flowcontrol for water cooling motors
 int flSeCnt = 0;              // Counter for sending flowrate
-unsigned int flowRate = 0;    // represents milliLiter/minute
 unsigned int flowcnt = 0;     // Flowmeter Counter
-unsigned int flowLev = flowMin;  // Value for motor start in milliLiter/minute
+int flowval = 0;              // Flowmeter Value
+int flowRate = 0;             // represents milliLiter/minute
+int flowLev = flowMin;        // Value for motor start in milliLiter/minute
 // The hall-effect flow sensor outputs approximately 45 pulses per 10 second per litre/minute of flow.
-const int calibrationFactor = 45;   // = liter / minute
+const int calibrationFactor = 125;   // = 2000 [mililiter / minute] / 16 [Hz] = 125 ml pro Hz
 
 // Serial with xBee
 String inStr = "";      // a string to hold incoming data
@@ -214,10 +215,21 @@ void setup()
   digitalWrite(xBuError, HIGH); // turn the LED ON (init start)
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
-  
+
+  runner.init();
+  runner.addTask(tM);
+  runner.addTask(tB);
+  runner.addTask(tR);
+  runner.addTask(tU);
+  runner.addTask(tBU);
+  runner.addTask(tBD);
+  runner.addTask(tDF);
+
+  // Current --------
+  runner.addTask(tCU);
+  runner.addTask(tFL);
+
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
-  
-  runner.startNow();
 
   // Check if I2C _ Ports are avilable
   Wire.beginTransmission(I2CPort);
@@ -248,7 +260,7 @@ void setup()
 // Setup End -----------------------------------
 
 // TASK (Functions) ----------------------------
-void checkXbee()
+void checkXbee()  // check if xBee name is read out
 {
   if (IDENT.startsWith(xBeeName) && co_ok == 2)
   {
@@ -259,7 +271,8 @@ void checkXbee()
   }
 }
 
-void retryPOR() {
+void retryPOR()   // wait until time string arrived
+{
   tDF.restartDelayed(TASK_SECOND * disLightOn); // restart display light
   if (getTime < porTime * 5) {
     Serial.println(String(IDENT) + ";POR;V" + String(Version));
@@ -278,7 +291,7 @@ void retryPOR() {
   }
 }
 
-void checkRFID()
+void checkRFID()  // wait until rfid token is recognized
 { // 500ms Tick
   if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
   {
@@ -311,7 +324,8 @@ void checkRFID()
   }
 }
 
-void UnLoCallback() {   // 500ms Tick
+void UnLoCallback() // switch off check for ontime
+{   // 500ms Tick
   uint8_t buttons = lcd.readButtons();
   if (timer > 0)
   {
@@ -357,22 +371,23 @@ void UnLoCallback() {   // 500ms Tick
 }
 
 // Task repeatMES: ------------------------
-void repeatMES() {
-  // --repeat messages from machines
+void repeatMES()    // --repeat messages from machines 
+{
   Serial.println(String(SFMes));
 }
 
-void BlinkCallback()
+void BlinkCallback()  // --Blink if BUS Error
 {
-  // --Blink if BUS Error
   digitalWrite(xBuError, !digitalRead(xBuError));
 }
 
-void FlashCallback() {
+void FlashCallback()  // flash time for LEDS
+{
   flash_led(1);
 }
 
-void DispOFF() {
+void DispOFF()    // switch display off and clear
+{
   displayIsON = false;
   lcd.setBacklight(BACKLIGHToff);
   lcd.clear();
@@ -380,8 +395,7 @@ void DispOFF() {
   flash_led(1);
 }
 
-// Current measure -----
-void Current()
+void Current()    // Current measuremet
 { // 500ms Tick
   // detect current for switching
   currentMax = getCurrMax();
@@ -454,21 +468,24 @@ void Current()
   currentVal = (currentVal + currentMax) / 2;
 }
 
-void FlowCallback()
+void FlowCallback() // save counter value and calculate flowrate and show resulte after a time
 {
   detachInterrupt(digitalPinToInterrupt(FLOWMETER));
-  flowRate = flowcnt * 1000/ calibrationFactor; // result in ml/min [measurement for 10 sec + calfactor * 10]
+  flowval = flowcnt;
+  flowcnt = 0;
+  attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
+  // send flowRate to LCD
+  flowRate = flowval * calibrationFactor / 10; // result in ml/min [with measurement for 10 sec]
+  char tbs[8];
+  sprintf(tbs, "% 5d", flowRate);
+  lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
+  // send flowrate every flSeCnt * FlowCallback with xBee
   if (flSeCnt <= 0)
   {
     Serial.println(String(IDENT) + ";flra;" + String(flowRate));
-    char tbs[8];
-    sprintf(tbs, "% 5d", flowRate);
-    lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
     flSeCnt = flowSend;
   }
-  flowcnt = 0;
   flSeCnt--;
-  attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
 }
 // END OF TASKS ---------------------------------
 
@@ -489,7 +506,8 @@ int getNum(String strNum) // Check if realy numbers
   return strNum.toInt();
 }
 
-void noreg() {
+void noreg()  // chip not registed
+{
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
   lcd.setCursor(0, 2); lcd.print("Tag not registered  ");
@@ -501,7 +519,8 @@ void noreg() {
   tDF.restartDelayed(TASK_SECOND * disLightOn);
 }
 
-void OnTimed(long min) {   // Turn on machine for nnn minutes
+void OnTimed(long min)  // Turn on machine for nnn minutes
+{
   onTime = true;
   timer = timer + min * 120;
   Serial.println(String(IDENT) + ";ont");
@@ -511,15 +530,15 @@ void OnTimed(long min) {   // Turn on machine for nnn minutes
   granted();
 }
 
-void OnPerm(void)  {    // Turn on machine permanently (VIP-Users only)
+void OnPerm(void) // Turn on machine permanently (VIP-Users only)
+{
   onTime = false;
   Serial.println(String(IDENT) + ";onp");
-  lcd.setCursor(0, 3); lcd.print("Press Stop to EXIT");
+  lcd.setCursor(0, 3); lcd.print("Press Stop to EXIT  ");
   granted();
 }
 
-// Tag registered
-void granted()
+void granted()  // Tag registered
 {
   tM.disable();
   tDF.disable();
@@ -544,31 +563,36 @@ void granted()
     {
       lcd.setCursor(0, 2); lcd.print("Access granted      ");
     }
+    but_led(3);
+    flash_led(1);
+    GoodSound();
+    tR.disable();
   }
   else
   {
-    digitalWrite(OUT_Machine, LOW);
+    switchOFF();
     lcd.setCursor(0, 2); lcd.print("Access?? ");
+    lcd.setCursor(0, 3); lcd.print("Access off: Flow<500");
   }
-  but_led(3);
-  flash_led(1);
-  GoodSound();
-  tR.disable();
 }
 
-// Switch off machine and stop
-void shutdown(void)
+void switchOFF(void) // Switch off machine
 {
   tU.disable();
   timer = 0;
   but_led(2);
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
-  Serial.println(String(IDENT) + ";off");
   tDF.restartDelayed(TASK_SECOND * disLightOn);
   BadSound();
   flash_led(1);
   tM.enable();    // added by DieterH on 18.10.2017
+  Serial.println(String(IDENT) + ";off");
+}
+
+void shutdown(void) // Switch off machine and stop
+{
+  switchOFF();
   if (flowControl)
   {
     flSeCnt = 0;
@@ -583,12 +607,12 @@ void shutdown(void)
   lcd.setCursor(0, 0); lcd.print("System shut down at");
 }
 
-void pulseCounter()
+void pulseCounter() // count interupt pulses
 {
   flowcnt++;
 }
 
-void but_led(int var)
+void but_led(int var) // control button leds
 {
   switch (var)
   {
@@ -607,7 +631,7 @@ void but_led(int var)
   }
 }
 
-void flash_led(int var)
+void flash_led(int var) // control flash leds
 {
   switch (var)
   {
@@ -630,19 +654,19 @@ void flash_led(int var)
   }
 }
 
-void BuzzerOff()
+void BuzzerOff()  // switch buzzer off
 {
   lcd.pinLEDs(buzzerPin, LOW);
   tBU.setCallback(&BuzzerOn);
 }
 
-void BuzzerOn()
+void BuzzerOn()   // switch buzzer on
 {
   lcd.pinLEDs(buzzerPin, HIGH);
   tBU.setCallback(&BuzzerOff);
 }
 
-void BadSound(void)
+void BadSound(void) // generate bad sound
 {   // added by DieterH on 22.10.2017
   tBU.setInterval(100);
   tBU.setIterations(6); // I think it must be Beeps * 2?
@@ -650,7 +674,7 @@ void BadSound(void)
   tBU.enable();
 }
 
-void GoodSound(void)
+void GoodSound(void) // generate good sound
 {
   lcd.pinLEDs(buzzerPin, HIGH);
   tBD.setCallback(&BuzzerOff);  // changed by DieterH on 18.10.2017
@@ -658,13 +682,13 @@ void GoodSound(void)
 }
 
 //  RFID ------------------------------
-void dispRFID(void)
+void dispRFID(void) 
 {
-  lcd.print("Sys  V" + String(Version).substring(0,3) + " starts at:");
+  lcd.print("Sys V" + String(Version).substring(0,3) + " starts at:");
   lcd.setCursor(0, 1); lcd.print("Wait Sync xBee:");
 }
 
-void displayON()
+void displayON()  // switch display on
 {
   displayIsON = true;
   lcd.setBacklight(BACKLIGHTon);
@@ -779,12 +803,13 @@ void evalSerialData()
     {
       flowControl = true;
       flSeCnt = 0;
+      flowcnt = 0;
       tFL.enable(); // flow measurement on
     }
     else
     {
       flowControl = false;
-      tFL.disable(); // flow measurement on
+      tFL.disable(); // flow measurement off
       stepsCM = 0;
     }
   }
