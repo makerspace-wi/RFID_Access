@@ -100,6 +100,7 @@ byte I2CTransmissionResult = 0;
 #define periRead     100 // [100] ms read analog input for 50Hz (current)
 #define currHyst      25 // [ 10] hystereses for current detection
 #define currMean       3 // [  3] current average over ...
+#define calibFactor  125 // [125] ml / Hz --> 16 [Hz] correlate with 2000 [mililiter / minute]
 
 // CREATE OBJECTS
 Scheduler runner;
@@ -125,19 +126,19 @@ void OnTimed(long);
 void flash_led(int);
 
 // TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee);	    // 500ms main task
-Task tR(TASK_SECOND / 2, 0, &repeatMES);                // 500ms * repMES repeat messages
-Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback);  // 1000ms / checkFA ctor
-Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback); // 5000ms added M. Muehl
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &runner);	   // 500ms main task
+Task tR(TASK_SECOND / 2, 0, &repeatMES, &runner);                // 500ms * repMES repeat messages
+Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback, &runner);  // 1000ms / checkFA ctor
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback, &runner); // 5000ms added M. Muehl
 
-Task tBU(TASK_SECOND / 10, 6, &BuzzerOn);               // 100ms 6x =600ms added by DieterH on 22.10.2017
-Task tBD(1, TASK_ONCE, &FlashCallback);                 // Flash Delay
-Task tDF(1, TASK_ONCE, &DispOFF);                       // display off
+Task tBU(TASK_SECOND / 10, 6, &BuzzerOn, &runner);               // 100ms 6x =600ms added by DieterH on 22.10.2017
+Task tBD(1, TASK_ONCE, &FlashCallback, &runner);                 // Flash Delay
+Task tDF(1, TASK_ONCE, &DispOFF, &runner);                       // display off
 
 // --- Current measurement --
-Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current);      // current measure
+Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current, &runner);      // current measure
 // --- or Flow measurement --
-Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback); // flow measure for 10sec
+Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback, &runner); // flow measure for 10sec
 
 // VARIABLES
 unsigned long val;
@@ -172,13 +173,11 @@ byte countCM = 0;             // counter for current measurement
 
 // Flow Sensor ---------------sensorInterrupt = 0;    // 0 = digital pin 2
 boolean flowControl = false;  // flowcontrol for water cooling motors
-int flSeCnt = 0;              // Counter for sending flowrate
+unsigned int flSeCnt = 0;     // Counter for sending flowrate
 unsigned int flowcnt = 0;     // Flowmeter Counter
-int flowval = 0;              // Flowmeter Value
-int flowRate = 0;             // represents milliLiter/minute
-int flowLev = flowMin;        // Value for motor start in milliLiter/minute
-// The hall-effect flow sensor outputs approximately 45 pulses per 10 second per litre/minute of flow.
-const int calibrationFactor = 125;   // = 2000 [mililiter / minute] / 16 [Hz] = 125 ml pro Hz
+unsigned int flowval = 0;     // Flowmeter Value
+unsigned int flowRate = 0;    // represents milliLiter/minute
+unsigned int flowLev = flowMin;      // Value for motor start in milliLiter/minute
 
 // Serial with xBee
 String inStr = "";      // a string to hold incoming data
@@ -216,20 +215,9 @@ void setup()
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
 
-  runner.init();
-  runner.addTask(tM);
-  runner.addTask(tB);
-  runner.addTask(tR);
-  runner.addTask(tU);
-  runner.addTask(tBU);
-  runner.addTask(tBD);
-  runner.addTask(tDF);
-
-  // Current --------
-  runner.addTask(tCU);
-  runner.addTask(tFL);
-
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
+
+  runner.startNow();
 
   // Check if I2C _ Ports are avilable
   Wire.beginTransmission(I2CPort);
@@ -475,7 +463,7 @@ void FlowCallback() // save counter value and calculate flowrate and show result
   flowcnt = 0;
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
   // send flowRate to LCD
-  flowRate = flowval * calibrationFactor / 10; // result in ml/min [with measurement for 10 sec]
+  flowRate = flowval * calibFactor / 10; // result in ml/min [with measurement for 10 sec]
   char tbs[8];
   sprintf(tbs, "% 5d", flowRate);
   lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
@@ -570,6 +558,7 @@ void granted()  // Tag registered
   }
   else
   {
+    onTime = false;
     switchOFF();
     lcd.setCursor(0, 2); lcd.print("Access?? ");
     lcd.setCursor(0, 3); lcd.print("Access off: Flow<500");
