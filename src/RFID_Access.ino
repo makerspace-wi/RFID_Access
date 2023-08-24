@@ -42,7 +42,7 @@
   changed: New version current measurement or flow mesurement are possible in ml/min
 
 */
-#define Version "9.8.2"  // (Test = 9.8.x ==> 9.8.2)
+#define Version "9.8.3"  // (Test = 9.8.x ==> 9.8.4)
 #define xBeeName   "MA"  // Name and number for xBee
 #define checkFA      2   // event check for every (1 second / FActor)
 #define flowSend     3   // [3] x 10 sec send flowrate 
@@ -262,7 +262,8 @@ void checkXbee()  // check if xBee name is read out
 void retryPOR()   // wait until time string arrived
 {
   tDF.restartDelayed(TASK_SECOND * disLightOn); // restart display light
-  if (getTime < porTime * 5) {
+  if (getTime < porTime * 5)
+  {
     Serial.println(String(IDENT) + ";POR;V" + String(Version));
     ++getTime;
     tB.setInterval(TASK_SECOND * getTime);
@@ -726,12 +727,13 @@ void evalSerialData()
     {
       IDENT = inStr;
       currNR = inStr.substring(2).toInt();
+      Serial.println("ATCN");
     }
     else
     {
-      lcd.setCursor(0, 0); lcd.print(inStr);
+      lcd.setCursor(0, 2);
+      lcd.print("?:" + inStr + ";not for:" + xBeeName); 
     }
-    Serial.println("ATCN");
   }
   else if (inStr.startsWith("TIME") && stepsCM <=3)
   {
