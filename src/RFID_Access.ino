@@ -9,9 +9,11 @@
   xBeeName - from xBee (=Ident) [max 4 caracter including numbers] {xBeeName + nn}
   'Ident;POR;Vx.x.x' - machine power on reset and sw version (Ident;por;Vx.x.x)
   'card;nn...'       - uid_2 from reader
+  
+  'Status:'
   'Ident;on'         - Ident is startet and time is on
   'Ident;off'        - Ident reporting nobody logged in
-  'Ident;?;'         - Ident reporting unknown command
+  'Ident;cmd?;'      - Ident reporting unknown command
   'Ident;Num?;'      - Ident reporting unkown number
   If current detection then:
   'cd_'    - current detected
@@ -42,11 +44,13 @@
   changed: New version current measurement or flow mesurement are possible in ml/min
 
 */
-#define Version "9.8.3"  // (Test = 9.8.x ==> 9.8.4)
-#define xBeeName   "MA"  // Name and number for xBee
-#define checkFA      2   // event check for every (1 second / FActor)
-#define flowSend     3   // [3] x 10 sec send flowrate 
-#define flowMin      500 // [500] minimum flow for motor start in milliLiter/min
+#define Version "9.8.5" // (Test = 9.8.x ==> 9.8.6)
+#define xBeeName   "MA" // Name and number for xBee
+#define checkFA      2  // event check for every (1 second / FActor)
+#define flowSend    12  // [12] x 10 sec send flowrate (2min)
+#define flowMin    500  // [500] minimum flow for motor start in milliLiter/min
+#define flowTol     25  // [25] warning signal start before flowMin
+#define flowMeas    10  // [10] second measure time
 
 #include <Arduino.h>
 #include <TaskScheduler.h>
@@ -58,42 +62,42 @@
 
 // PIN Assignments
 // RFID Control -------
-#define RST_PIN      4   // RFID Reset
-#define SS_PIN      10   // RFID Select
+#define RST_PIN      4  // RFID Reset
+#define SS_PIN      10  // RFID Select
 
 // Machine Control (ext)
-#define FLOWMETER    2   // input Flow Meter [INT0]
-#define currMotor   A0   // Motor current (Machine)
+#define FLOWMETER    2  // input Flow Meter [INT0]
+#define currMotor   A0  // Motor current (Machine)
 
-#define OUT_Machine A2   // OUT Machine on / off  (Machine)
-#define OUT_Dust    A3   // OUT Dust on / off  (Dust Collector)
+#define OUT_Machine A2  // OUT Machine on / off  (Machine)
+#define OUT_Dust    A3  // OUT Dust on / off  (Dust Collector)
 
-#define xBuError     8   // xBee and Bus error (13)
+#define xBuError     8  // xBee and Bus error (13)
 
 // I2C IOPort definition
 byte I2CFound = 0;
 byte I2CTransmissionResult = 0;
-#define I2CPort   0x20   // I2C Adress MCP23017
+#define I2CPort   0x20  // I2C Adress MCP23017 (LCD Display +)
 
 // Pin Assignments Display (I2C LCD Port A/LED +Button Port B)
 // Switched to LOW
-#define FlashLED_A   0   // Flash LEDs oben
-#define FlashLED_B   1   // Flash LEDs unten
-#define buzzerPin    2   // Buzzer Pin
-#define BUT_P1_LED   3   // not used
+#define FlashLED_A   0  // Flash LEDs oben
+#define FlashLED_B   1  // Flash LEDs unten
+#define buzzerPin    2  // Buzzer Pin
+#define BUT_P1_LED   3  // not used
 // Switched High - Low - High - Low
-#define StopLEDrt    4   // StopLEDrt (LED + Stop-Taster)
-#define StopLEDgn    5   // StopLEDgn (LED - Stop-Taster)
+#define StopLEDrt    4  // StopLEDrt (LED + Stop-Taster)
+#define StopLEDgn    5  // StopLEDgn (LED - Stop-Taster)
 // switch to HIGH Value (def .h)
-// BUTTON_P1         6   // not used
-// BUTTON_P2         7   // StopSwitch
+// BUTTON_P1         6  // not used
+// BUTTON_P2         7  // StopSwitch
 // BACKLIGHT for LCD-Display
 #define BACKLIGHToff 0x0
 #define BACKLIGHTon  0x1
 
 // DEFINES
 #define porTime        5 // [  5] wait seconds for sending Ident + POR
-#define disLightOn    30 // [.30] display light on for seconds
+#define disLightOn    30 // [ 30] display light on for seconds
 #define CLOSE2END     15 // [ 15] MINUTES blinking before activation is switched off
 #define CLEANON        6 // [  6] TASK_SECOND dust collector on after current off
 #define repMES         1 // [  1] repeat commands
@@ -103,49 +107,50 @@ byte I2CTransmissionResult = 0;
 #define calibFactor  125 // [125] ml / Hz --> 16 [Hz] correlate with 2000 [mililiter / minute]
 
 // CREATE OBJECTS
-Scheduler runner;
+Scheduler r;
 LCDLED_BreakOUT lcd = LCDLED_BreakOUT();
-MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
+MFRC522 rfid(SS_PIN, RST_PIN);  // Create MFRC522 instance
 
 // Callback methods prototypes
 void checkXbee();        // Task connect to xBee Server
-void BlinkCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
-void UnLoCallback();     // Task to Unlock machine
+void Indication();       // Task to let LED blink
+void Unlocktimer();      // Task to Unlock machine
 void repeatMES();        // Task to repeat messages
 
-void BuzzerOn();         // added by DieterH on 22.10.2017
-void FlashCallback();    // Task to let LED blink - added by D. Haude 08.03.2017
+void BuzzerOn();         // Task for Buzzer
+void FlashDelay();       // Task to let LED blink
 void DispOFF();          // Task to switch display off after time
 
 void Current();          // current measurement and detection
 
-void FlowCallback();     // Task to calculate Flow Rate - added by D. Haude 08.03.2017
+void FlowMeasure();      // Task to calculate Flow Rate
 
 // Functions define for C++
 void OnTimed(long);
 void flash_led(int);
 
-// TASKS
-Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &runner);	   // 500ms main task
-Task tR(TASK_SECOND / 2, 0, &repeatMES, &runner);                // 500ms * repMES repeat messages
-Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &UnLoCallback, &runner);  // 1000ms / checkFA ctor
-Task tB(TASK_SECOND * 5, TASK_FOREVER, &BlinkCallback, &runner); // 5000ms added M. Muehl
+// TASKS (CallBack)
+Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &r);	         // 500ms main task
+Task tR(TASK_SECOND / 2, 0, &repeatMES, &r);                     // 500ms * repMES repeat messages
+Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &Unlocktimer, &r);  // 1000ms / checkFActor unlock timer
+Task tB(TASK_SECOND * 5, TASK_FOREVER, &Indication, &r);         // 5000ms Indication for several events
 
-Task tBU(TASK_SECOND / 10, 6, &BuzzerOn, &runner);               // 100ms 6x =600ms added by DieterH on 22.10.2017
-Task tBD(1, TASK_ONCE, &FlashCallback, &runner);                 // Flash Delay
-Task tDF(1, TASK_ONCE, &DispOFF, &runner);                       // display off
+Task tBU(TASK_SECOND / 10, 6, &BuzzerOn, &r);                    // 100ms 6x =600ms buzzer on for 6 times
+Task tFD(1, TASK_ONCE, &FlashDelay, &r);                         // Flash Delay leds
+Task tDF(1, TASK_ONCE, &DispOFF, &r);                            // display off after xx sec
 
 // --- Current measurement --
-Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current, &runner);      // current measure
+Task tCU(TASK_SECOND / 2, TASK_FOREVER, &Current, &r);             // current measure
 // --- or Flow measurement --
-Task tFL(TASK_SECOND * 10, TASK_FOREVER, &FlowCallback, &runner); // flow measure for 10sec
+Task tFM(TASK_SECOND * flowMeas, TASK_FOREVER, &FlowMeasure, &r); // flow measure for flowMeas sec
 
 // VARIABLES
 unsigned long val;
 unsigned int timer = 0;
 bool onTime = false;
 int minutes = 0;
-bool toggle = false;
+bool timeToogle = false;
+bool flowToogle = false;
 unsigned long code;
 byte atqa[2];
 byte atqaLen = sizeof(atqa);
@@ -181,9 +186,9 @@ unsigned int flowLev = flowMin;      // Value for motor start in milliLiter/minu
 
 // Serial with xBee
 String inStr = "";      // a string to hold incoming data
-String IDENT = "";      // Machine identifier for remote access control
+String IDENT = "";      // identifier for remote access control
 String SFMes = "";      // String send for repeatMES
-byte co_ok = 0;         // send +++ control AT sequenz OK
+byte co_ok = 0;         // count ok after +++ control AT sequenz
 byte getTime = porTime;
 
 // ======>  SET UP AREA <=====
@@ -199,9 +204,8 @@ void setup()
 
   SPI.begin();             // SPI
 
-  mfrc522.PCD_Init();      // Init MFRC522
-  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_avg);
-  // mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  rfid.PCD_Init();      // Init MFRC522
+  rfid.PCD_SetAntennaGain(rfid.RxGain_avg);
 
   // IO MODES
   pinMode(xBuError, OUTPUT);
@@ -217,7 +221,7 @@ void setup()
 
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
 
-  runner.startNow();
+  r.startNow();
 
   // Check if I2C _ Ports are avilable
   Wire.beginTransmission(I2CPort);
@@ -237,7 +241,7 @@ void setup()
     flash_led(1);
     dispRFID();
     tM.enable();         // xBee check
-    Serial.print("+++"); //Starting the request of IDENT
+    Serial.print(F("+++")); //Starting the request of IDENT
   }
   else
   {
@@ -275,31 +279,30 @@ void retryPOR()   // wait until time string arrived
     tR.setIterations(repMES);
     tM.setCallback(checkRFID);
     tM.enable();
-    tB.disable();
     displayON();
   }
 }
 
 void checkRFID()  // wait until rfid token is recognized
 { // 500ms Tick
-  if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial())
   {
     code = 0;
     firstCLOSE = false;
-    for (byte i = 0; i < mfrc522.uid.size; i++) {
-      code = ((code + mfrc522.uid.uidByte[i]) * 10);
+    for (byte i = 0; i < rfid.uid.size; i++) {
+      code = ((code + rfid.uid.uidByte[i]) * 10);
     }
     if (!digitalRead(OUT_Machine))
     { // Check if machine is switched on
       flash_led(4);
-      tBD.setCallback(&FlashCallback);
-      tBD.restartDelayed(100);
+      tFD.setCallback(&FlashDelay);
+      tFD.restartDelayed(100);
       tDF.restartDelayed(TASK_SECOND * disLightOn);
     }
     Serial.println("card;" + String(code));
     // Display changes
-    lcd.setCursor(5, 0); lcd.print("               ");
-    lcd.setCursor(0, 0); lcd.print("Card# "); lcd.print(code);
+    lcd.setCursor(5, 0); lcd.print(F("               "));
+    lcd.setCursor(0, 0); lcd.print(F("Card# ")); lcd.print(code);
     displayON();
   }
 
@@ -313,16 +316,17 @@ void checkRFID()  // wait until rfid token is recognized
   }
 }
 
-void UnLoCallback() // switch off check for ontime
+void Unlocktimer() // switch off check for ontime
 {   // 500ms Tick
   uint8_t buttons = lcd.readButtons();
   if (timer > 0)
   {
     if (timer / 120 < CLOSE)
     { // Close to end time reached
-      toggle = !toggle;
-      if (toggle)
-      { // toggle GREEN Button LED
+      timeToogle = !timeToogle;
+      tB.disable();
+      if (timeToogle)
+      { // timeToogle GREEN Button LED
         but_led(1);
         flash_led(1);
       }
@@ -342,9 +346,9 @@ void UnLoCallback() // switch off check for ontime
         firstCLOSE = true;
       }
     }
-    timer -= 1;
-    minutes = timer / 120;
-    if (timer % 120 == 0)
+    --timer;
+    minutes = timer / (60 * checkFA);
+    if (timer % (60 * checkFA) == 0)
     {
       char tbs[8];
       sprintf(tbs, "% 4d", minutes);
@@ -365,12 +369,12 @@ void repeatMES()    // --repeat messages from machines
   Serial.println(String(SFMes));
 }
 
-void BlinkCallback()  // --Blink if BUS Error
+void Indication()  // --Blink if BUS Error
 {
   digitalWrite(xBuError, !digitalRead(xBuError));
 }
 
-void FlashCallback()  // flash time for LEDS
+void FlashDelay()  // flash time for LEDS
 {
   flash_led(1);
 }
@@ -457,18 +461,26 @@ void Current()    // Current measuremet
   currentVal = (currentVal + currentMax) / 2;
 }
 
-void FlowCallback() // save counter value and calculate flowrate and show resulte after a time
+void FlowMeasure() // save counter value and calculate flowrate and show resulte after a time
 {
   detachInterrupt(digitalPinToInterrupt(FLOWMETER));
   flowval = flowcnt;
   flowcnt = 0;
   attachInterrupt(digitalPinToInterrupt(FLOWMETER), pulseCounter, FALLING);
   // send flowRate to LCD
-  flowRate = flowval * calibFactor / 10; // result in ml/min [with measurement for 10 sec]
+  flowRate = flowval * calibFactor / flowMeas; // result in ml/min [with measurement for 10 sec]
   char tbs[8];
   sprintf(tbs, "% 5d", flowRate);
   lcd.setCursor(10, 2); lcd.print("Flow:"); lcd.print(tbs);
-  // send flowrate every flSeCnt * FlowCallback with xBee
+  if (flowRate <= flowLev + flowTol)
+  {
+    tB.enable();
+  }
+  else
+  {
+   tB.disable();
+   flash_led(1);
+  }
   if (flSeCnt <= 0)
   {
     Serial.println(String(IDENT) + ";flra;" + String(flowRate));
@@ -487,20 +499,18 @@ int getNum(String strNum) // Check if realy numbers
     if (!isDigit(strNum[i])) 
     {
       Serial.println(String(IDENT) + ";?;" + inStr + ";Num?;" + strNum);
-      lcd.setCursor(19,0);
-      lcd.print("?");
+      lcd.setCursor(0, 2); lcd.print(F("no mumber           "));
+      lcd.setCursor(0, 3); lcd.print(F("logout and reset    "));
       return 0;
     }
   }
   return strNum.toInt();
 }
 
-void noreg()  // chip not registed
-{
+void noact()
+{ // no action
   digitalWrite(OUT_Machine, LOW);
   digitalWrite(OUT_Dust, LOW);
-  lcd.setCursor(0, 2); lcd.print("Tag not registered  ");
-  lcd.setCursor(0, 3); lcd.print("===> No access! <===");
   tM.enable();
   BadSound();
   but_led(1);
@@ -511,11 +521,11 @@ void noreg()  // chip not registed
 void OnTimed(long min)  // Turn on machine for nnn minutes
 {
   onTime = true;
-  timer = timer + min * 120;
+  timer = timer + min * (60 * checkFA);
   Serial.println(String(IDENT) + ";ont");
   char tbs[8];
-  sprintf(tbs, "% 4d", timer / 120);
-  lcd.setCursor(0, 3); lcd.print("Time left (min):"); lcd.print(tbs);
+  sprintf(tbs, "% 4d", timer / (60 * checkFA));
+  lcd.setCursor(0, 3); lcd.print(F("Time left (min):")); lcd.print(tbs);
   granted();
 }
 
@@ -535,6 +545,8 @@ void granted()  // Tag registered
   if (flowControl)
   {
     flSeCnt = 0;
+    tB.setCallback(errorFlow);
+    tB.setInterval(TASK_SECOND);
   }
   else
   {
@@ -566,8 +578,8 @@ void granted()  // Tag registered
   }
 }
 
-void switchOFF(void) // Switch off machine
-{
+void switchOFF(void)
+{ // Switch off machine and stop
   tU.disable();
   timer = 0;
   but_led(2);
@@ -602,8 +614,8 @@ void pulseCounter() // count interupt pulses
   flowcnt++;
 }
 
-void but_led(int var) // control button leds
-{
+void but_led(int var)
+{ // button led switching
   switch (var)
   {
     case 1: // LED rt & gn off
@@ -621,8 +633,8 @@ void but_led(int var) // control button leds
   }
 }
 
-void flash_led(int var) // control flash leds
-{
+void flash_led(int var)
+{ // flash leds switching
   switch (var)
   {
     case 1:   // LEDs off
@@ -667,15 +679,28 @@ void BadSound(void) // generate bad sound
 void GoodSound(void) // generate good sound
 {
   lcd.pinLEDs(buzzerPin, HIGH);
-  tBD.setCallback(&BuzzerOff);  // changed by DieterH on 18.10.2017
-  tBD.restartDelayed(200);      // changed by DieterH on 18.10.2017
+  tFD.setCallback(&BuzzerOff);
+  tFD.restartDelayed(200);
+}
+
+void errorFlow()  // blinking on flow error
+{
+  if (!flowToogle) 
+  {
+    flash_led(2);
+  }
+  else
+  {
+    flash_led(3);
+  }
+  flowToogle = !flowToogle;
 }
 
 //  RFID ------------------------------
-void dispRFID(void) 
+void dispRFID(void)
 {
   lcd.print("Sys V" + String(Version).substring(0,3) + " starts at:");
-  lcd.setCursor(0, 1); lcd.print("Wait Sync xBee:");
+  lcd.setCursor(0, 1); lcd.print(F("Wait Sync xBee:"));
 }
 
 void displayON()  // switch display on
@@ -713,7 +738,7 @@ void evalSerialData()
   {
     if (co_ok == 0)
     {
-      Serial.println("ATNI");
+      Serial.println(F("ATNI"));
       ++co_ok;
     }
     else
@@ -727,7 +752,7 @@ void evalSerialData()
     {
       IDENT = inStr;
       currNR = inStr.substring(2).toInt();
-      Serial.println("ATCN");
+      Serial.println(F("ATCN"));
     }
     else
     {
@@ -743,8 +768,10 @@ void evalSerialData()
     getTime = 255;
   }
   else if (inStr.startsWith("NOREG") && inStr.length() ==5)
-  {
-    noreg();  // changed by D. Haude on 18.10.2017
+  { // chip not registed
+    lcd.setCursor(0, 2); lcd.print(F("Tag not registered  "));
+    lcd.setCursor(0, 3); lcd.print(F("===> No access! <==="));
+    noact();
   }
   else if (inStr.startsWith("ONT") && inStr.length() >= 4 && inStr.length() < 7) 
   {
@@ -795,12 +822,12 @@ void evalSerialData()
       flowControl = true;
       flSeCnt = 0;
       flowcnt = 0;
-      tFL.enable(); // flow measurement on
+      tFM.enable(); // flow measurement on
     }
     else
     {
       flowControl = false;
-      tFL.disable(); // flow measurement off
+      tFM.disable(); // flow measurement off
       stepsCM = 0;
     }
   }
@@ -812,7 +839,6 @@ void evalSerialData()
   else if (inStr.startsWith("DISON") && !digitalRead(OUT_Machine))
   { // Switch display on for disLightOn secs
     displayON();
-    tDF.restartDelayed(TASK_SECOND * disLightOn);
   }
   else if (inStr.substring(0, 3) == "R3T" && inStr.length() > 3)
   {  // print to LCD row 3
@@ -828,35 +854,30 @@ void evalSerialData()
   }
   else
   {
-    Serial.println(String(IDENT) + ";?;" + inStr);
-    inStr.concat("                    ");    // add blanks to string
-    lcd.setCursor(0,2);
-    lcd.print("?:" + inStr.substring(0,18)); // cut string lenght to 20 char
+    Serial.println(String(IDENT) + ";cmd?;" + inStr);
+    lcd.setCursor(0, 2); lcd.print(F("Unknown command     "));
+    lcd.setCursor(0, 3); lcd.print(F("logout and reset    "));
+    noact();
   }
   inStr = "";
-}
-
-/* SerialEvent occurs whenever a new data comes in the
-  hardware serial RX.  This routine is run between each
-  time loop() runs, so using delay inside loop can delay
-  response.  Multiple bytes of data may be available.
-*/
-void serialEvent()
-{
-  char inChar = (char)Serial.read();
-  if (inChar == '\x0d')
-  {
-    evalSerialData();
-    inStr = "";
-  }
-  else if (inChar != '\x0a')
-  {
-    inStr += inChar;
-  }
 }
 // End Funktions Serial Input -------------------
 
 // PROGRAM LOOP AREA ----------------------------
-void loop() {
-  runner.execute();
+void loop()
+{
+  r.execute();
+  if (Serial.available() > 0)
+  {
+    char inChar = (char)Serial.read();
+    if (inChar == '\x0d')
+    {
+      evalSerialData();
+      inStr = "";
+    }
+    else if (inChar != '\x0a')
+    {
+      inStr += inChar;
+    }
+  }
 }
