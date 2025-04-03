@@ -40,11 +40,11 @@
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 10.11.2022 by Michael Muehl
-  changed: New version current measurement or flow mesurement are possible in ml/min
+  last change: 02.04.2025 by Michael Muehl
+  changed: Change value for repeat message to no repeat [only for old dust collector]
 
 */
-#define Version "9.8.5" // (Test = 9.8.x ==> 9.8.6)
+#define Version "9.8.6" // (Test = 9.8.x ==> 9.8.6)
 #define xBeeName   "MA" // Name and number for xBee
 #define checkFA      2  // event check for every (1 second / FActor)
 #define flowSend    12  // [12] x 10 sec send flowrate (2min)
@@ -100,7 +100,7 @@ byte I2CTransmissionResult = 0;
 #define disLightOn    30 // [ 30] display light on for seconds
 #define CLOSE2END     15 // [ 15] MINUTES blinking before activation is switched off
 #define CLEANON        6 // [  6] TASK_SECOND dust collector on after current off
-#define repMES         1 // [  1] repeat commands
+#define repMES         0 // [  0] repeat commands
 #define periRead     100 // [100] ms read analog input for 50Hz (current)
 #define currHyst      25 // [ 10] hystereses for current detection
 #define currMean       3 // [  3] current average over ...
@@ -131,7 +131,7 @@ void flash_led(int);
 
 // TASKS (CallBack)
 Task tM(TASK_SECOND / 2, TASK_FOREVER, &checkXbee, &r);	         // 500ms main task
-Task tR(TASK_SECOND / 2, 0, &repeatMES, &r);                     // 500ms * repMES repeat messages
+Task tR(TASK_SECOND / 2, 0, &repeatMES, &r);                     // 500ms repeat messages (set repMES for iterations > 0)
 Task tU(TASK_SECOND / checkFA, TASK_FOREVER, &Unlocktimer, &r);  // 1000ms / checkFActor unlock timer
 Task tB(TASK_SECOND * 5, TASK_FOREVER, &Indication, &r);         // 5000ms Indication for several events
 
@@ -807,7 +807,7 @@ void evalSerialData()
   else if (inStr.startsWith("SETRT") && inStr.length() >= 5 && inStr.length() < 7)
   { // set repeat messages
     val = getNum(inStr.substring(5));
-    if (val >= repMES) tR.setIterations(val);
+    tR.setIterations(val);
   }
   else if (inStr.startsWith("SETCL") && inStr.length() >= 5 && inStr.length() < 8)
   { // set Current Level for switching relais on and off
