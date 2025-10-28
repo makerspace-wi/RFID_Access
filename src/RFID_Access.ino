@@ -41,8 +41,8 @@
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 02.04.2025 by Michael Muehl
-  changed: Change value for repeat message to no repeat [only for old dust collector]
+  last change: 28.10.2025 by Michael Muehl
+  changed: Add switch to send current max value every 10 sec (mean over this time) 
 
 */
 #define Version "9.8.7" // (Test = 9.8.x ==> 9.8.8)
