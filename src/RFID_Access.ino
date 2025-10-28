@@ -33,6 +33,7 @@
   'setce'  - [15 min] set time before ClosE machine
   'setcn'  - [6 sec] set time for longer CleaN on
   'setcl'  - [0] set Current Level for switching on and off [CURLEV = current value / 3 * 2]
+  'setsc'  - [0] set send current value active = 1
   'setfc'  - [0] set flowcontrol active = 1
   'setfm'  - [150] (ml/min) set flow minimum for maschine on
   'setrt'  - [1] set RepeaT messages
@@ -44,7 +45,7 @@
   changed: Change value for repeat message to no repeat [only for old dust collector]
 
 */
-#define Version "9.8.6" // (Test = 9.8.x ==> 9.8.6)
+#define Version "9.8.7" // (Test = 9.8.x ==> 9.8.8)
 #define xBeeName   "MA" // Name and number for xBee
 #define checkFA      2  // event check for every (1 second / FActor)
 #define flowSend    12  // [12] x 10 sec send flowrate (2min)
@@ -170,7 +171,10 @@ unsigned int CLEAN = CLEANON; // RAM cell for Dust vaccu cleaner on after no cur
 unsigned int CURLEV = 0;      // RAM cell for detecting ON = > and OFF = > (CURLEV = 1. current value / 3 * 2)
 
 // current measurement (cleaning on):
-unsigned int currentVal =0;   // mean value
+bool sendcur = 0;             // send current value active (1)
+byte sendCurrMean = 0;        // counter for mean current to send
+unsigned int currentMean =0;  // mean value for sending current
+unsigned int currentVal =0;   // mean value over periodes
 unsigned int currentMax =0;   // read max value
 int currNR  = 0;              // number off machine with current detection
 byte stepsCM = 0;             // steps for current measurement
@@ -392,6 +396,17 @@ void Current()    // Current measuremet
 { // 500ms Tick
   // detect current for switching
   currentMax = getCurrMax();
+  if (sendcur)
+  {
+    currentMean = currentMean + currentMax;
+    ++sendCurrMean;
+    if (sendCurrMean >= 20)
+    { // every 10 sec send
+      Serial.println("CUR" + String(currNR) + ";" + String(currentMean / sendCurrMean));
+      sendCurrMean = 0;
+      currentMean = 0;
+    }
+  }
   // steps ------------------
   switch (stepsCM)
   {
@@ -813,6 +828,18 @@ void evalSerialData()
   { // set Current Level for switching relais on and off
     val = getNum(inStr.substring(5));
     if (val > 0) CURLEV = val;
+  }
+  else if (inStr.startsWith("SETSC") && inStr.length() == 6)
+  { // active flow control = true
+    val = getNum(inStr.substring(5));
+    if (inStr.substring(5) == "1") 
+    {
+      sendcur  = true;
+    }
+    else
+    {
+      sendcur  = false;
+    }
   }
   else if (inStr.startsWith("SETFC") && inStr.length() == 6)
   { // active flow control = true
