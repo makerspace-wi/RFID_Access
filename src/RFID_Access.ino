@@ -41,11 +41,11 @@
   'r3t...' - display text in row 3 "r3tabcde12345", max 20
   'r4t...' - display text in row 4 "r4tabcde12345", max 20
 
-  last change: 28.10.2025 by Michael Muehl
-  changed: Add switch to send current max value every 10 sec (mean over this time) 
+  last change: 24.02.2026 by Michael Muehl
+  changed: update documentation, check boundary for current level setting
 
 */
-#define Version "9.8.7" // (Test = 9.8.x ==> 9.8.8)
+#define Version "9.8.8" // (Test = 9.8.x ==> 9.8.9)
 #define xBeeName   "MA" // Name and number for xBee
 #define checkFA      2  // event check for every (1 second / FActor)
 #define flowSend    12  // [12] x 10 sec send flowrate (2min)
@@ -206,7 +206,7 @@ void setup()
   // initialize:
   Wire.begin();         // I2C
 
-  SPI.begin();             // SPI
+  SPI.begin();          // SPI
 
   rfid.PCD_Init();      // Init MFRC522
   rfid.PCD_SetAntennaGain(rfid.RxGain_avg);
@@ -776,7 +776,7 @@ void evalSerialData()
     }
   }
   else if (inStr.startsWith("TIME") && stepsCM <=3)
-  {
+  { // time string arrived
     inStr.concat("                   ");     // add blanks to string
     lcd.setCursor(0, 1); lcd.print(inStr.substring(4,24));
     tB.setInterval(TASK_SECOND / 2);
@@ -824,13 +824,13 @@ void evalSerialData()
     val = getNum(inStr.substring(5));
     tR.setIterations(val);
   }
-  else if (inStr.startsWith("SETCL") && inStr.length() >= 5 && inStr.length() < 8)
+  else if (inStr.startsWith("SETCL") && inStr.length() >= 5 && inStr.length() < 9)
   { // set Current Level for switching relais on and off
     val = getNum(inStr.substring(5));
-    if (val > 0) CURLEV = val;
+    if (val > 0) CURLEV = val; // <= 999 (3 Digits)
   }
   else if (inStr.startsWith("SETSC") && inStr.length() == 6)
-  { // active flow control = true
+  { // active current send = true
     val = getNum(inStr.substring(5));
     if (inStr.substring(5) == "1") 
     {
